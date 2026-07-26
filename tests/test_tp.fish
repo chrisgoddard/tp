@@ -31,6 +31,7 @@ end
 
 set -l repo_root (path resolve (dirname (status filename))/..)
 source "$repo_root/functions/tp.fish"
+source "$repo_root/completions/tp.fish"
 
 assert_equal 8 (_tp_decimal_number 008) 'leading zeroes are parsed as decimal'
 assert_equal 0 (_tp_decimal_number 000) 'all-zero input is normalized'
@@ -62,6 +63,19 @@ assert_equal 'demo_001 demo_002 demo_010 other_001' (string join ' ' $global_ses
 
 tp name 2 backend >/dev/null; or fail 'tp name failed'
 assert_equal backend (tmux show-option -t demo_002 -v @tp_name) 'tp name stores a session label'
+
+set -l project_completion_values (__tp_complete_project_sessions | string replace -r '\t.*$' '')
+assert_equal '001 002 010' (string join ' ' $project_completion_values) 'project completions contain sorted session numbers'
+set -l project_completions (__tp_complete_project_sessions)
+if not contains -- (printf '002\tdemo_002 [backend]') $project_completions
+    fail 'project completion does not include the session label'
+end
+printf 'ok - project completion includes the session label\n'
+
+set -l global_completion_values (__tp_complete_global_session_indexes | string replace -r '\t.*$' '')
+assert_equal '1 2 3 4' (string join ' ' $global_completion_values) 'global completions contain one-based indexes'
+set -l global_completion_sessions (__tp_complete_global_session_indexes | string replace -r '^[^\t]+\t' '')
+assert_equal 'demo_001 demo_002 demo_010 other_001' (string join ' ' $global_completion_sessions) 'global completion indexes match list order'
 
 tp kill 2 >/dev/null; or fail 'tp kill 2 failed'
 if tmux has-session -t '=demo_002' 2>/dev/null
