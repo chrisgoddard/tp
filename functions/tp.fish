@@ -344,6 +344,9 @@ function _tp_list_sessions --description "List tmux sessions matching a project 
             set -a sessions $line
         end
     end
+    if test (count $sessions) -eq 0
+        return 0
+    end
     printf '%s\n' $sessions | sort -t_ -k2 -n
 end
 
@@ -353,6 +356,9 @@ function _tp_list_global --description "List all tp-managed tmux sessions (proje
         if string match -qr '^.+_\\d+$' $line
             set -a sessions $line
         end
+    end
+    if test (count $sessions) -eq 0
+        return 0
     end
     # Sort by project name, then numerically by trailing number
     printf '%s\n' $sessions | sort -t_ -k1,1 -k2,2n

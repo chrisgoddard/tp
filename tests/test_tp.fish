@@ -46,6 +46,22 @@ printf 'ok - non-numeric session numbers are rejected\n'
 mkdir -p "$test_root/demo"
 cd "$test_root/demo"
 
+set -l empty_project_sessions (_tp_list_sessions demo)
+assert_equal 0 (count $empty_project_sessions) 'empty project list contains no phantom session'
+
+set -l empty_global_sessions (_tp_list_global)
+assert_equal 0 (count $empty_global_sessions) 'empty global list contains no phantom session'
+
+set -l empty_ls_output (tp ls)
+set -l empty_ls_status $status
+assert_equal 1 $empty_ls_status 'tp ls fails when no project sessions exist'
+assert_equal "No tmux sessions for 'demo'" (string join ' ' $empty_ls_output) 'tp ls reports no project sessions'
+
+set -l empty_global_output (tp global)
+set -l empty_global_status $status
+assert_equal 1 $empty_global_status 'tp global fails when no tp sessions exist'
+assert_equal 'No tp sessions' (string join ' ' $empty_global_output) 'tp global reports no sessions'
+
 _tp_create demo 10; or fail 'could not create demo_010'
 _tp_create demo 2; or fail 'could not create demo_002'
 _tp_create demo 1; or fail 'could not create demo_001'
@@ -84,7 +100,7 @@ end
 printf 'ok - tp kill removes a selected project session\n'
 
 tp kill >/dev/null; or fail 'tp kill failed'
-set sessions (_tp_list_sessions demo)
-assert_equal '' (string join ' ' $sessions) 'tp kill removes all current-project sessions'
+set -l sessions_after_kill (_tp_list_sessions demo)
+assert_equal 0 (count $sessions_after_kill) 'tp kill removes all current-project sessions'
 
 printf 'All tp tests passed.\n'
