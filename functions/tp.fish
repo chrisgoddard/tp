@@ -88,6 +88,9 @@ function tp --description "Manage tmux sessions for the current project director
             # _tp_list_sessions is sorted ascending by number → last is highest
             _tp_attach $existing[-1]
 
+        case shot
+            _tp_shot $argv[2..]
+
         case cmux c
             _tp_cmux $argv[2..]
 
@@ -175,7 +178,7 @@ function tp --description "Manage tmux sessions for the current project director
                     _tp_attach $target
                 end
             else
-                echo "Usage: tp [new [-n name] [cmd...]|ls|last|kill [n]|name <n> <label>|global [i]|cmux [i|prefix|all]|all|<number>]"
+                echo "Usage: tp [new [-n name] [cmd...]|ls|last|kill [n]|name <n> <label>|shot [latest|list [n]|dir]|global [i]|cmux [i|prefix|all]|all|<number>]"
                 echo ""
                 echo "  tp                       Attach to first session (or create _1)"
                 echo "  tp new [-n name] [cmd..] Create next numbered session"
@@ -185,6 +188,9 @@ function tp --description "Manage tmux sessions for the current project director
                 echo "  tp ls                    List sessions for current project"
                 echo "  tp kill                  Kill all project sessions"
                 echo "  tp kill <n>              Kill session _n"
+                echo "  tp shot                  Print the newest uploaded screenshot path"
+                echo "  tp shot list [n]         List the newest screenshot paths (default: 10)"
+                echo "  tp shot dir              Print the screenshot upload directory"
                 echo "  tp global                List all tp sessions everywhere (alias: g)"
                 echo "  tp global <i>            Attach to global tp session by index"
                 echo "  tp cmux                  List global sessions and cmux state (alias: c)"
@@ -194,6 +200,88 @@ function tp --description "Manage tmux sessions for the current project director
                 echo "  tp all                   List all tmux sessions"
                 return 1
             end
+    end
+end
+
+function _tp_shot --description "Find screenshots uploaded by tp-shot"
+    set -l action $argv[1]
+
+    switch "$action"
+        case '' latest
+            if test (count $argv) -gt 1
+                echo "Usage: tp shot latest" >&2
+                return 2
+            end
+            set -l shots (_tp_list_shots)
+            if test (count $shots) -eq 0
+                echo "No uploaded screenshots in "(_tp_shot_dir) >&2
+                return 1
+            end
+            printf '%s\n' "$shots[1]"
+
+        case list ls
+            set -l limit 10
+            if set -q argv[2]
+                set limit (_tp_decimal_number "$argv[2]")
+                or begin
+                    echo "Usage: tp shot list [count]" >&2
+                    return 2
+                end
+                if test (string length "$limit") -gt 6
+                    echo "tp shot list: count is too large" >&2
+                    return 2
+                end
+                if test "$limit" -lt 1
+                    echo "tp shot list: count must be at least 1" >&2
+                    return 2
+                end
+            end
+            if test (count $argv) -gt 2
+                echo "Usage: tp shot list [count]" >&2
+                return 2
+            end
+
+            set -l shots (_tp_list_shots)
+            if test (count $shots) -eq 0
+                echo "No uploaded screenshots in "(_tp_shot_dir) >&2
+                return 1
+            end
+            if test "$limit" -gt (count $shots)
+                set limit (count $shots)
+            end
+            printf '%s\n' $shots[1..$limit]
+
+        case dir
+            if test (count $argv) -gt 1
+                echo "Usage: tp shot dir" >&2
+                return 2
+            end
+            _tp_shot_dir
+
+        case '*'
+            echo "Usage: tp shot [latest|list [count]|dir]" >&2
+            return 2
+    end
+end
+
+function _tp_shot_dir --description "Return the screenshot upload directory"
+    if set -q TP_SHOT_DIR; and test -n "$TP_SHOT_DIR"
+        printf '%s\n' "$TP_SHOT_DIR"
+    else
+        printf '%s\n' "$HOME/.cache/pi/screenshots"
+    end
+end
+
+function _tp_list_shots --description "List uploaded screenshots newest first"
+    set -l shot_dir (_tp_shot_dir)
+    if not test -d "$shot_dir"
+        return
+    end
+
+    for name in (command ls -1t "$shot_dir" 2>/dev/null)
+        if string match -qir '\.(png|jpe?g|gif|webp|bmp)$' -- "$name"; and test -f "$shot_dir/$name"
+            printf '%s/%s\n' "$shot_dir" "$name"
+        end
     end
 end
 
