@@ -10,6 +10,7 @@ Sessions are named from the current directory and a zero-padded number. Running 
 - [tmux](https://github.com/tmux/tmux)
 - Optional: [cmux](https://github.com/manaflow-ai/cmux) and [`jq`](https://jqlang.github.io/jq/) for the `tp cmux` integration
 - For screenshot sharing: a macOS capture computer with `ssh` access to the remote computer
+- Optional: [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) for reliable background upload notifications
 
 ## Installation
 
@@ -95,13 +96,25 @@ When that command exits, `tp` preserves and replays the pane's final output in t
 
 ## Share laptop screenshots with a remote Pi session
 
-`tp-shot` solves the local-path problem in remote sessions. It uses the same macOS interactive capture interface as the normal screenshot keys, then:
+`tp-shot` solves the local-path problem in remote sessions. It uses the same macOS interactive capture interface as the normal screenshot keys, uploads the image over SSH, and copies only the remote path to the laptop clipboard. Images land in `~/.cache/pi/screenshots/` on the remote computer. The directory and image are restricted to the remote account.
 
-1. Uploads the PNG over SSH to `~/.cache/pi/screenshots/` on the remote computer. The directory and image are restricted to the remote account.
-2. Copies a path such as `/Users/me/.cache/pi/screenshots/tp-shot-….png` to the laptop clipboard.
-3. Shows a macOS notification when the upload is ready.
+Synchronous mode is the default. It waits for the upload, then copies the final path and reports success:
 
-Paste into Pi with Command-V. Pi receives a path on the computer where it is running, so it can read the image directly.
+```fish
+tp-shot
+tp-shot ~/Desktop/Screenshot.png
+```
+
+Async mode reserves a UUID-based final path, copies it immediately, and uploads in a detached worker:
+
+```fish
+tp-shot --async
+tp-shot --async ~/Desktop/Screenshot.png
+```
+
+The detached worker waits for the foreground process to transfer cleanup ownership before it starts SSH. It then uploads to a hidden temporary file, sets private permissions, and moves the complete file to the copied final path in one filesystem operation. An explicit input image is copied to a private local snapshot before the command returns, so later edits to the original cannot change the upload. A macOS notification reports when the path is ready or when the upload failed. Each upload writes a private log under `~/.cache/tp-shot/` on the laptop.
+
+Paste the copied path into Pi with Command-V. Pi receives a path on the computer where it is running, so it can read the image directly. If async upload is still running, a Pi installation with the `wait_for_screenshot` tool can wait briefly and return the uploaded image directly instead of treating the missing path as a permanent error.
 
 The ordinary Command-Shift-4 shortcut only saves an image or places image data on the laptop clipboard. Neither is visible to a process running on another computer. `tp-shot` adds the SSH transfer and puts a remote text path on the clipboard instead. It does not replace the ordinary shortcut.
 
@@ -133,19 +146,31 @@ Before using a keyboard shortcut, connect once in a terminal so SSH can confirm 
 ssh good-studio true
 ```
 
-Then test the complete flow from a laptop terminal:
+Test notifications before relying on async mode:
 
 ```fish
+tp-shot --notify-test
+```
+
+The helper uses `terminal-notifier` when available and falls back to `osascript` if it is missing or fails. If the test does not appear, allow notifications for the relevant app in macOS System Settings. You can install the preferred notifier with `brew install terminal-notifier`. Set `TP_SHOT_NOTIFIER=none` only when you intentionally want log-only outcomes; `--notify-test` then reports that notifications are disabled.
+
+Then test both upload modes from a laptop terminal:
+
+```fish
+# Wait for upload before returning
 tp-shot
+
+# Copy the final path immediately; notify when it becomes ready
+tp-shot --async
 ```
 
-Select a region or window. After the notification appears, paste into Pi. To upload an image created with the ordinary screenshot keys instead, pass its local path:
+Select a region or window. After the ready notification appears, paste into Pi. Use `tp shot` on the remote computer if you lose the copied path. `tp shot list` shows the ten most recent uploads.
+
+Async mode assumes the laptop and remote account use the same absolute screenshot directory. If they do not, configure the remote path on the laptop:
 
 ```fish
-tp-shot ~/Desktop/Screenshot.png
+set -Ux TP_SHOT_REMOTE_DIR /Users/remote-user/.cache/pi/screenshots
 ```
-
-Use `tp shot` on the remote computer if you lose the copied path. `tp shot list` shows the ten most recent uploads.
 
 ### Add a separate macOS keyboard shortcut
 
@@ -162,7 +187,7 @@ Keep Command-Shift-4 unchanged and assign another key combination to `tp-shot`:
 4. Use that path in the shortcut's script. For example, Apple Silicon Homebrew normally uses:
 
    ```sh
-   /opt/homebrew/bin/fish -lc 'tp-shot'
+   /opt/homebrew/bin/fish -lc 'tp-shot --async'
    ```
 
    Intel Homebrew commonly uses `/usr/local/bin/fish`; other installations may differ.
@@ -170,9 +195,9 @@ Keep Command-Shift-4 unchanged and assign another key combination to `tp-shot`:
 5. Open the shortcut details, enable **Use as Quick Action**, and add a keyboard shortcut such as Control-Option-Command-4.
 6. Run it once and approve any macOS screen-capture permission request.
 
-The shortcut opens the normal macOS crosshair. The only difference comes after selection: the image goes to the remote Pi computer and the paste-ready remote path goes to the laptop clipboard.
+The shortcut opens the normal macOS crosshair. After selection, async mode copies the reserved remote path without waiting. A later notification reports whether that path became ready.
 
-The helper uses non-interactive SSH when launched, so it fails instead of leaving an invisible password prompt open. Configure key-based or Tailscale SSH access before using the keyboard shortcut.
+The detached uploader survives the shortcut's shell process exiting. It uses non-interactive SSH, so it fails instead of leaving an invisible password prompt open. Configure key-based or Tailscale SSH access before using the keyboard shortcut.
 
 ### cmux integration
 
