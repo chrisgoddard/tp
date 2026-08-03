@@ -111,14 +111,14 @@ function tp-shot --description "Capture or upload a screenshot for a remote Pi s
         rm -f "$source_path"
     end
     if test $scp_status -ne 0
-        command ssh $ssh_options -- "$host" "rm -f -- $escaped_remote_path" >/dev/null 2>&1
+        command ssh $ssh_options -- "$host" "rm -f $escaped_remote_path" >/dev/null 2>&1
         echo "tp-shot: upload to '$host' failed" >&2
         return 1
     end
 
-    command ssh $ssh_options -- "$host" "chmod 600 -- $escaped_remote_path"
+    command ssh $ssh_options -- "$host" "chmod 600 $escaped_remote_path"
     if test $status -ne 0
-        command ssh $ssh_options -- "$host" "rm -f -- $escaped_remote_path" >/dev/null 2>&1
+        command ssh $ssh_options -- "$host" "rm -f $escaped_remote_path" >/dev/null 2>&1
         echo "tp-shot: could not make the uploaded screenshot private" >&2
         return 1
     end
