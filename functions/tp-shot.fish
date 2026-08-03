@@ -6,8 +6,8 @@ function tp-shot --description "Capture or upload a screenshot for a remote Pi s
         echo "Usage: tp-shot [--host HOST] [IMAGE]"
         echo ""
         echo "Without IMAGE, open macOS's interactive screenshot picker."
-        echo "Upload the image to Good Studio, then copy a Pi-ready prompt"
-        echo "containing its remote path to this Mac's clipboard."
+        echo "Upload the image to Good Studio, then copy its remote path"
+        echo "to this Mac's clipboard."
         echo ""
         echo "Environment:"
         echo "  TP_SHOT_HOST   SSH host or alias (default: good-studio)"
@@ -123,17 +123,17 @@ function tp-shot --description "Capture or upload a screenshot for a remote Pi s
         return 1
     end
 
-    set -l prompt "Please inspect this screenshot: $remote_path"
+    set -l clipboard_text "$remote_path"
     if not command -sq pbcopy
-        printf '%s\n' "$prompt"
-        echo "tp-shot: pbcopy is not available; copy the prompt above manually" >&2
+        printf '%s\n' "$clipboard_text"
+        echo "tp-shot: pbcopy is not available; copy the path above manually" >&2
         return 1
     end
 
-    printf '%s' "$prompt" | command pbcopy
+    printf '%s' "$clipboard_text" | command pbcopy
     or begin
-        printf '%s\n' "$prompt"
-        echo "tp-shot: could not copy the prompt; copy it from above manually" >&2
+        printf '%s\n' "$clipboard_text"
+        echo "tp-shot: could not copy the path; copy it from above manually" >&2
         return 1
     end
 
@@ -143,7 +143,7 @@ function tp-shot --description "Capture or upload a screenshot for a remote Pi s
     end
 
     printf 'Uploaded: %s\n' "$remote_path"
-    echo "Copied a Pi-ready prompt to the clipboard."
+    echo "Copied the remote path to the clipboard."
 end
 
 function _tp_shot_remote_setup_command --description "Return the shell-neutral remote setup command"

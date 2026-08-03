@@ -152,13 +152,13 @@ or fail 'explicit host is not passed to ssh'
 set -l previous_index (math "$host_index - 1")
 assert_equal -- "$ssh_args[$previous_index]" 'ssh option parsing ends before the explicit host'
 pass 'explicit host is passed to ssh'
-set -l prompt (string collect < "$test_log/clipboard")
-if not string match -q "Please inspect this screenshot: $remote_dir/tp-shot-*.png" -- "$prompt"
-    fail "clipboard prompt has an unexpected shape: $prompt"
+set -l clipboard_text (string collect < "$test_log/clipboard")
+if not string match -q "$remote_dir/tp-shot-*.png" -- "$clipboard_text"
+    fail "clipboard path has an unexpected shape: $clipboard_text"
 end
-pass 'clipboard receives a Pi-ready prompt with the remote path'
+pass 'clipboard receives only the remote screenshot path'
 
-set -l uploaded_path (string replace 'Please inspect this screenshot: ' '' -- "$prompt")
+set -l uploaded_path "$clipboard_text"
 assert_file_contains existing-image "$uploaded_path" 'existing image is copied to the remote path'
 assert_equal 700 (file_mode "$remote_dir") 'remote screenshot directory is private'
 assert_equal 600 (file_mode "$uploaded_path") 'uploaded screenshot is private'
@@ -192,8 +192,8 @@ if not test -s "$test_log/screencapture-args"
     fail 'interactive capture did not call screencapture'
 end
 pass 'no file argument opens an interactive screenshot capture'
-set prompt (string collect < "$test_log/clipboard")
-set uploaded_path (string replace 'Please inspect this screenshot: ' '' -- "$prompt")
+set clipboard_text (string collect < "$test_log/clipboard")
+set uploaded_path "$clipboard_text"
 assert_file_contains captured-image "$uploaded_path" 'captured image is copied to the remote path'
 
 set -gx TP_SHOT_TEST_CANCEL 1
