@@ -98,7 +98,7 @@ When that command exits, `tp` preserves and replays the pane's final output in t
 `tp-shot` solves the local-path problem in remote sessions. It uses the same macOS interactive capture interface as the normal screenshot keys, then:
 
 1. Uploads the PNG over SSH to `~/.cache/pi/screenshots/` on the remote computer. The directory and image are restricted to the remote account.
-2. Copies text such as `Please inspect this screenshot: /Users/me/.cache/pi/screenshots/tp-shot-….png` to the laptop clipboard.
+2. Copies a path such as `/Users/me/.cache/pi/screenshots/tp-shot-….png` to the laptop clipboard.
 3. Shows a macOS notification when the upload is ready.
 
 Paste into Pi with Command-V. Pi receives a path on the computer where it is running, so it can read the image directly.
