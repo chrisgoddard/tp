@@ -48,6 +48,7 @@ complete -c tp -n '__fish_use_subcommand' -a list -d 'List sessions for the curr
 complete -c tp -n '__fish_use_subcommand' -a last -d 'Attach to the last-created project session'
 complete -c tp -n '__fish_use_subcommand' -a kill -d 'Kill one or all project sessions'
 complete -c tp -n '__fish_use_subcommand' -a name -d 'Set a session label'
+complete -c tp -n '__fish_use_subcommand' -a shot -d 'Find screenshots uploaded by tp-shot'
 complete -c tp -n '__fish_use_subcommand' -a global -d 'List or attach to tp sessions across projects'
 complete -c tp -n '__fish_use_subcommand' -a cmux -d 'Open or focus tp sessions in cmux'
 complete -c tp -n '__fish_use_subcommand' -a all -d 'List all tmux sessions'
@@ -68,6 +69,11 @@ complete -c tp -n '__fish_seen_subcommand_from kill k name' -a '(__tp_complete_p
 complete -c tp -n '__fish_seen_subcommand_from new n' -s n -l name -r -d 'Label the new session'
 complete -c tp -n '__fish_seen_subcommand_from new n' \
     -a '(__fish_complete_subcommand --fcs-skip=2 --name -n)'
+
+# Screenshot lookup actions.
+complete -c tp -n '__fish_seen_subcommand_from shot; and not __fish_seen_subcommand_from latest list ls dir' -a latest -d 'Print the newest uploaded screenshot path'
+complete -c tp -n '__fish_seen_subcommand_from shot; and not __fish_seen_subcommand_from latest list ls dir' -a list -d 'List recent uploaded screenshot paths'
+complete -c tp -n '__fish_seen_subcommand_from shot; and not __fish_seen_subcommand_from latest list ls dir' -a dir -d 'Print the screenshot upload directory'
 
 # Global and cmux selectors are one-based indexes into the displayed global list.
 complete -c tp -n '__fish_seen_subcommand_from global g' -a '(__tp_complete_global_session_indexes)'

@@ -77,6 +77,38 @@ assert_equal 'demo_001 demo_002 demo_010' (string join ' ' $sessions) 'project l
 set -l global_sessions (_tp_list_global)
 assert_equal 'demo_001 demo_002 demo_010 other_001' (string join ' ' $global_sessions) 'global listing is grouped and sorted'
 
+set -gx TP_SHOT_DIR "$test_root/screenshots"
+mkdir -p "$TP_SHOT_DIR"
+printf old > "$TP_SHOT_DIR/tp-shot-20260101T000000Z-studio-1.png"
+printf new > "$TP_SHOT_DIR/tp-shot-20260102T000000Z-laptop-2.png"
+touch -t 202601010000 "$TP_SHOT_DIR/tp-shot-20260101T000000Z-studio-1.png"
+touch -t 202601020000 "$TP_SHOT_DIR/tp-shot-20260102T000000Z-laptop-2.png"
+
+set -l shots (_tp_list_shots)
+assert_equal \
+    "$TP_SHOT_DIR/tp-shot-20260102T000000Z-laptop-2.png $TP_SHOT_DIR/tp-shot-20260101T000000Z-studio-1.png" \
+    (string join ' ' $shots) \
+    'screenshots are listed newest first'
+assert_equal "$TP_SHOT_DIR/tp-shot-20260102T000000Z-laptop-2.png" (tp shot) 'tp shot returns the newest screenshot'
+assert_equal "$TP_SHOT_DIR/tp-shot-20260102T000000Z-laptop-2.png" (tp shot list 1) 'tp shot list accepts a result limit'
+assert_equal "$TP_SHOT_DIR" (tp shot dir) 'tp shot dir returns the screenshot directory'
+if tp shot latest extra >/dev/null 2>&1
+    fail 'tp shot latest accepted an extra argument'
+end
+printf 'ok - tp shot latest rejects extra arguments\n'
+for invalid_args in 'list nope' 'list 0' 'list 1 extra'
+    set -l parts (string split ' ' "$invalid_args")
+    tp shot $parts >/dev/null 2>&1
+    assert_equal 2 "$status" "tp shot $invalid_args returns a usage error"
+end
+set -l oversized_output (tp shot list 999999999999999999999999 2>&1)
+set -l oversized_status $status
+assert_equal 2 "$oversized_status" 'tp shot list rejects an oversized count'
+if string match -qr 'Result too large|Invalid index' -- "$oversized_output"
+    fail 'tp shot list exposed a Fish numeric error for an oversized count'
+end
+printf 'ok - oversized screenshot counts fail without Fish diagnostics\n'
+
 tp name 2 backend >/dev/null; or fail 'tp name failed'
 assert_equal backend (tmux show-option -t demo_002 -v @tp_name) 'tp name stores a session label'
 
