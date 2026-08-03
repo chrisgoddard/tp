@@ -5,6 +5,7 @@ set -g test_log "$test_root/log"
 set -g fake_bin "$test_root/bin"
 set -g remote_dir "$test_root/remote shots"
 mkdir -p "$test_log" "$fake_bin" "$remote_dir"
+set -gx TP_SHOT_TEST_REAL_NOHUP (command -s nohup)
 
 function __tp_shot_test_cleanup --on-event fish_exit
     rm -rf "$test_root"
@@ -49,6 +50,49 @@ function file_mode
     printf '%s\n' "$mode"
 end
 
+function wait_for_file
+    set -l path $argv[1]
+    set -l attempts $argv[2]
+    set -l attempt 0
+    while test "$attempt" -lt "$attempts"
+        if test -f "$path"
+            return
+        end
+        sleep 0.05
+        set attempt (math "$attempt + 1")
+    end
+    return 1
+end
+
+function wait_for_absent
+    set -l path $argv[1]
+    set -l attempts $argv[2]
+    set -l attempt 0
+    while test "$attempt" -lt "$attempts"
+        if not test -e "$path"
+            return
+        end
+        sleep 0.05
+        set attempt (math "$attempt + 1")
+    end
+    return 1
+end
+
+function wait_for_log_match
+    set -l path $argv[1]
+    set -l pattern $argv[2]
+    set -l attempts $argv[3]
+    set -l attempt 0
+    while test "$attempt" -lt "$attempts"
+        if test -f "$path"; and string match -qi "$pattern" -- (string collect < "$path")
+            return
+        end
+        sleep 0.05
+        set attempt (math "$attempt + 1")
+    end
+    return 1
+end
+
 function write_mock
     string join \n $argv[2..] >"$argv[1]"
 end
@@ -74,11 +118,9 @@ write_mock "$fake_bin/ssh" \
     '    if test "$TP_SHOT_TEST_CHMOD_FAIL" = 1' \
     '        exit 18' \
     '    end' \
-    '    set -l uploaded_path (cat "$TP_SHOT_TEST_LOG/uploaded-path")' \
-    '    chmod 600 "$uploaded_path"' \
+    '    fish --no-config -c "$remote_command"' \
     'else if string match -q \'*rm -f*\' -- "$remote_command"' \
-    '    set -l uploaded_path (cat "$TP_SHOT_TEST_LOG/uploaded-path")' \
-    '    rm -f "$uploaded_path"' \
+    '    fish --no-config -c "$remote_command"' \
     end
 
 write_mock "$fake_bin/scp" \
@@ -93,6 +135,16 @@ write_mock "$fake_bin/scp" \
     'set -l source $argv[-2]' \
     'set -l destination $argv[-1]' \
     'set -l remote_path (string replace -r \'^[^:]+:\' \'\' -- "$destination")' \
+    'if test -n "$TP_SHOT_TEST_SCP_STARTED"' \
+    '    printf partial-image > "$remote_path"' \
+    '    printf \'%s\n\' "$remote_path" > "$TP_SHOT_TEST_SCP_STARTED"' \
+    '    while not test -f "$TP_SHOT_TEST_SCP_RELEASE"' \
+    '        sleep 0.01' \
+    '    end' \
+    end \
+    'if test -n "$TP_SHOT_TEST_SCP_DELAY"' \
+    '    sleep "$TP_SHOT_TEST_SCP_DELAY"' \
+    end \
     'if test "$TP_SHOT_TEST_SCP_FAIL" = 1' \
     '    printf \'partial-image\' > "$remote_path"' \
     '    printf \'%s\n\' "$remote_path" > "$TP_SHOT_TEST_LOG/uploaded-path"' \
@@ -117,11 +169,37 @@ write_mock "$fake_bin/osascript" \
     '#!/usr/bin/env fish' \
     'printf \'%s\n\' $argv > "$TP_SHOT_TEST_LOG/osascript-args"'
 
+write_mock "$fake_bin/terminal-notifier" \
+    '#!/usr/bin/env fish' \
+    'printf \'%s\n\' $argv > "$TP_SHOT_TEST_LOG/terminal-notifier-args"' \
+    'if test "$TP_SHOT_TEST_TERMINAL_NOTIFIER_FAIL" = 1' \
+    '    exit 44' \
+    end
+
+write_mock "$fake_bin/nohup" \
+    '#!/usr/bin/env fish' \
+    'if test "$TP_SHOT_TEST_NOHUP_FAIL" = 1' \
+    '    echo "mock nohup startup failure" >&2' \
+    '    exit 45' \
+    end \
+    'command "$TP_SHOT_TEST_REAL_NOHUP" $argv'
+
+write_mock "$fake_bin/uuidgen" \
+    '#!/usr/bin/env fish' \
+    'set -l count 0' \
+    'if test -f "$TP_SHOT_TEST_LOG/uuid-count"' \
+    '    set count (cat "$TP_SHOT_TEST_LOG/uuid-count")' \
+    end \
+    'set count (math "$count + 1")' \
+    'printf \'%s\n\' "$count" > "$TP_SHOT_TEST_LOG/uuid-count"' \
+    'printf \'00000000-0000-4000-8000-%012d\n\' "$count"'
+
 chmod +x "$fake_bin"/*
 set -gx PATH "$fake_bin" $PATH
 set -gx TP_SHOT_TEST_LOG "$test_log"
 set -gx TP_SHOT_TEST_REMOTE "$remote_dir"
 set -gx TP_SHOT_HOST ignored-default
+set -gx TP_SHOT_NOTIFIER osascript
 
 set -l repo_root (path resolve (dirname (status filename))/..)
 source "$repo_root/functions/tp-shot.fish"
@@ -139,6 +217,19 @@ for remote_shell in fish sh
     set -l expected_dir "$shell_home/.cache/pi/screenshots"
     assert_equal "$expected_dir" "$setup_output" "remote setup reports its path under $remote_shell"
     assert_equal 700 (file_mode "$expected_dir") "remote setup creates a private directory under $remote_shell"
+end
+
+set -l custom_remote_dir (string join '' "$test_root/" "custom remote dir's " '$cash;\slash"quote')
+set setup_command (_tp_shot_remote_setup_command "$custom_remote_dir")
+for remote_shell in fish sh
+    set -l shell_args -c
+    if test "$remote_shell" = fish
+        set shell_args --no-config -c
+    end
+    set -l setup_output ("$remote_shell" $shell_args "$setup_command" 2>&1)
+    or fail "$remote_shell could not run the custom remote setup command: $setup_output"
+    assert_equal "$custom_remote_dir" "$setup_output" "custom remote setup reports its exact path under $remote_shell"
+    assert_equal 700 (file_mode "$custom_remote_dir") "custom remote setup creates a private directory under $remote_shell"
 end
 
 set -l input "$test_root/source image.png"
@@ -274,5 +365,189 @@ if tp-shot "$test_root/missing.png" >/dev/null 2>&1
     fail 'missing input unexpectedly succeeded'
 end
 pass 'missing input is rejected'
+
+rm -f "$test_log/osascript-args"
+tp-shot --notify-test >/dev/null 2>&1
+or fail 'notification test failed'
+if not string match -qi '*test notification*' -- (string collect < "$test_log/osascript-args")
+    fail 'notification test did not send a macOS notification'
+end
+pass 'notification test sends a macOS notification'
+
+set -gx TP_SHOT_NOTIFIER auto
+set -gx TP_SHOT_TEST_TERMINAL_NOTIFIER_FAIL 1
+rm -f "$test_log/terminal-notifier-args" "$test_log/osascript-args"
+tp-shot --notify-test >/dev/null 2>&1
+or fail 'automatic notification fallback failed'
+if not test -s "$test_log/terminal-notifier-args"; or not test -s "$test_log/osascript-args"
+    fail 'automatic notifier did not fall back from terminal-notifier to osascript'
+end
+pass 'automatic notifications fall back to osascript'
+set -e TP_SHOT_TEST_TERMINAL_NOTIFIER_FAIL
+
+set -gx TP_SHOT_NOTIFIER none
+set output (tp-shot --notify-test 2>&1)
+if test $status -eq 0; or not string match -qi '*notifications are disabled*' -- "$output"
+    fail 'notification test claimed success while notifications were disabled'
+end
+pass 'notification test reports when notifications are disabled'
+set -gx TP_SHOT_NOTIFIER osascript
+
+set -l handshake_source "$test_root/handshake-source.png"
+set -l handshake_start "$test_log/handshake-started"
+set -l handshake_ownership "$test_log/handshake-owned"
+set -l handshake_final "$remote_dir/handshake.png"
+set -l handshake_uploading "$remote_dir/.handshake.png.uploading"
+printf handshake-image >"$handshake_source"
+rm -f "$handshake_start" "$handshake_ownership" "$handshake_final" "$handshake_uploading"
+set -l scp_before_handshake (cat "$test_log/scp-count")
+fish --no-config -c 'source "$argv[1]"; and _tp_shot_async_entry $argv[2..]' -- \
+    "$repo_root/functions/tp-shot.fish" "$handshake_start" "$handshake_ownership" ignored-host "$handshake_source" "$remote_dir" "$handshake_final" false &
+set -l handshake_pid $last_pid
+wait_for_file "$handshake_start" 40
+or fail 'async worker did not announce startup before ownership transfer'
+sleep 0.1
+assert_equal "$scp_before_handshake" (cat "$test_log/scp-count") 'async worker does not start scp before ownership transfer'
+if test -e "$handshake_final"; or test -e "$handshake_uploading"
+    fail 'async worker created a remote path before ownership transfer'
+end
+pass 'async worker keeps both remote paths absent before ownership transfer'
+printf '%s\n' test-parent >"$handshake_ownership"
+wait_for_file "$handshake_final" 40
+or fail 'async worker did not upload after ownership transfer'
+wait "$handshake_pid"
+or fail 'async worker failed after ownership transfer'
+assert_file_contains handshake-image "$handshake_final" 'async worker uploads only after ownership transfer'
+if test -e "$handshake_start"; or test -e "$handshake_ownership"
+    fail 'async worker left startup handshake markers behind'
+end
+pass 'async worker removes startup handshake markers after ownership transfer'
+rm -f "$handshake_final"
+
+set -gx TP_SHOT_REMOTE_DIR "$remote_dir"
+set -gx TP_SHOT_LOG_DIR "$test_root/async logs"
+set -gx TP_SHOT_TEST_SCP_STARTED "$test_log/scp-paused"
+set -gx TP_SHOT_TEST_SCP_RELEASE "$test_log/scp-release"
+rm -f "$TP_SHOT_TEST_SCP_STARTED" "$TP_SHOT_TEST_SCP_RELEASE"
+rm -f "$test_log/clipboard" "$test_log/osascript-args"
+set output (tp-shot --async "$input" 2>&1)
+or fail "async upload could not be queued: $output"
+set -l async_path (string collect < "$test_log/clipboard")
+set -l expected_async_path "$remote_dir/tp-shot-00000000-0000-4000-8000-000000000001.png"
+assert_equal "$expected_async_path" "$async_path" 'async mode copies the UUID-based final path immediately'
+wait_for_file "$TP_SHOT_TEST_SCP_STARTED" 40
+or fail 'async upload did not reach its paused partial transfer'
+set -l uploading_path (string collect < "$TP_SHOT_TEST_SCP_STARTED")
+set -l expected_uploading_path "$remote_dir/.tp-shot-00000000-0000-4000-8000-000000000001.png.uploading"
+assert_equal "$expected_uploading_path" "$uploading_path" 'async upload writes to the hidden temporary path'
+assert_file_contains partial-image "$uploading_path" 'async temporary path can contain partial upload data'
+if test -e "$async_path"
+    fail 'async final path appeared while only partial upload data existed'
+end
+pass 'async mode returns before the upload completes'
+printf changed-after-queue >"$input"
+touch "$TP_SHOT_TEST_SCP_RELEASE"
+wait_for_file "$async_path" 100
+or fail 'async upload did not publish its final path'
+assert_file_contains existing-image "$async_path" 'async upload atomically publishes the complete image'
+printf existing-image >"$input"
+assert_equal 600 (file_mode "$async_path") 'async upload publishes a private image'
+if test -e "$expected_uploading_path"
+    fail 'async upload left its temporary remote file behind'
+end
+set -l async_scp_args (cat "$test_log/scp-args")
+set -l staged_source "$async_scp_args[-2]"
+if test "$staged_source" = "$input"
+    fail 'async upload did not use a private source snapshot'
+end
+wait_for_absent "$staged_source" 40
+or fail 'async upload did not clean its private source snapshot'
+pass 'async upload snapshots explicit input before returning'
+wait_for_log_match "$test_log/osascript-args" '*ready to paste*' 40
+or fail 'async upload did not send a ready notification'
+set -l success_log "$TP_SHOT_LOG_DIR/00000000-0000-4000-8000-000000000001.log"
+wait_for_log_match "$success_log" '*Ready:*' 40
+or fail 'async upload did not record a useful completion log'
+pass 'async upload records a useful completion log'
+assert_equal 600 (file_mode "$success_log") 'async upload log is private'
+pass 'async upload sends a ready notification after publication'
+
+set -e TP_SHOT_TEST_SCP_STARTED TP_SHOT_TEST_SCP_RELEASE
+set -gx TP_SHOT_TEST_SCP_FAIL 1
+rm -f "$test_log/clipboard" "$test_log/osascript-args"
+set output (tp-shot --async 2>&1)
+or fail "failed async upload could not be queued: $output"
+set async_path (string collect < "$test_log/clipboard")
+set -l failed_async_path "$remote_dir/tp-shot-00000000-0000-4000-8000-000000000002.png"
+assert_equal "$failed_async_path" "$async_path" 'failed async upload still exposes its reserved final path'
+set -l captured_source (string split '\n' < "$test_log/screencapture-args")[-1]
+wait_for_log_match "$test_log/osascript-args" '*upload failed*' 100
+or fail 'failed async upload did not send a failure notification'
+if test -e "$failed_async_path"; or test -e "$remote_dir/.tp-shot-00000000-0000-4000-8000-000000000002.png.uploading"
+    fail 'failed async upload left a remote file behind'
+end
+if test -e "$captured_source"
+    fail 'failed async upload left its captured local image behind'
+end
+pass 'failed async upload cleans up and sends a failure notification'
+set -e TP_SHOT_TEST_SCP_FAIL
+
+set -gx TP_SHOT_TEST_CHMOD_FAIL 1
+rm -f "$test_log/clipboard" "$test_log/osascript-args"
+set output (tp-shot --async "$input" 2>&1)
+or fail "async publish failure could not be queued: $output"
+set -l publish_failed_path "$remote_dir/tp-shot-00000000-0000-4000-8000-000000000003.png"
+assert_equal "$publish_failed_path" (string collect < "$test_log/clipboard") 'publish failure still exposes its reserved final path'
+wait_for_log_match "$test_log/osascript-args" '*upload failed*' 100
+or fail 'async publish failure did not send a failure notification'
+if test -e "$publish_failed_path"; or test -e "$remote_dir/.tp-shot-00000000-0000-4000-8000-000000000003.png.uploading"
+    fail 'async publish failure left a remote file behind'
+end
+set async_scp_args (cat "$test_log/scp-args")
+set staged_source "$async_scp_args[-2]"
+if test -e "$staged_source"
+    fail 'async publish failure left its local source snapshot behind'
+end
+pass 'async publish failure cleans up and sends a failure notification'
+set -e TP_SHOT_TEST_CHMOD_FAIL
+
+set -gx TP_SHOT_TEST_NOHUP_FAIL 1
+rm -f "$test_log/clipboard" "$test_log/osascript-args" "$test_log/screencapture-args"
+set output (tp-shot --async 2>&1)
+if test $status -eq 0
+    fail 'async startup failure was incorrectly reported as queued'
+end
+set -l startup_failed_path "$remote_dir/tp-shot-00000000-0000-4000-8000-000000000004.png"
+assert_equal "$startup_failed_path" (string collect < "$test_log/clipboard") 'startup failure preserves the immediately copied reserved path'
+set captured_source (string split '\n' < "$test_log/screencapture-args")[-1]
+if test -e "$captured_source"
+    fail 'async startup failure left its captured local image behind'
+end
+if not string match -qi '*did not start*' -- "$output"
+    fail 'async startup failure did not explain that the uploader failed to start'
+end
+if not string match -qi '*upload failed*' -- (string collect < "$test_log/osascript-args")
+    fail 'async startup failure did not send a failure notification'
+end
+pass 'async startup handshake detects failure and cleans local capture'
+set -e TP_SHOT_TEST_NOHUP_FAIL
+
+set -gx TP_SHOT_TEST_SCP_DELAY 1
+rm -f "$test_log/clipboard" "$test_log/osascript-args"
+set output (fish --no-config -c 'source "$argv[1]"; and tp-shot --async "$argv[2]"' -- "$repo_root/functions/tp-shot.fish" "$input" 2>&1)
+or fail "short-lived Fish process could not queue async upload: $output"
+set async_path (string collect < "$test_log/clipboard")
+set -l detached_async_path "$remote_dir/tp-shot-00000000-0000-4000-8000-000000000005.png"
+assert_equal "$detached_async_path" "$async_path" 'short-lived Fish process copies its reserved path'
+if test -e "$detached_async_path"
+    fail 'short-lived Fish process waited for its delayed upload'
+end
+wait_for_file "$detached_async_path" 100
+or fail 'detached worker did not survive its calling Fish process'
+wait_for_log_match "$test_log/osascript-args" '*ready to paste*' 40
+or fail 'surviving detached worker did not notify on completion'
+pass 'detached worker survives its calling Fish process'
+
+set -e TP_SHOT_TEST_SCP_DELAY TP_SHOT_REMOTE_DIR TP_SHOT_LOG_DIR
 
 printf 'All tp-shot tests passed.\n'
