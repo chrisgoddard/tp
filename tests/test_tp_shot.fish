@@ -167,10 +167,13 @@ set host_index (contains -i -- studio.test $chmod_args)
 or fail 'explicit host is not passed to the permission command'
 set previous_index (math "$host_index - 1")
 assert_equal -- "$chmod_args[$previous_index]" 'ssh option parsing ends before the permission-command host'
-if not string match -q "*chmod 600 -- *" -- "$chmod_args[-1]"
+if string match -q '*chmod 600 -- *' -- "$chmod_args[-1]"
+    fail 'uploaded screenshot permission command uses GNU-only -- syntax'
+end
+if not string match -q '*chmod 600 *' -- "$chmod_args[-1]"
     fail 'uploaded screenshot permission command is missing chmod 600'
 end
-pass 'uploaded screenshot permission command is sent over ssh'
+pass 'uploaded screenshot permission command is compatible with macOS chmod'
 set -l scp_args (cat "$test_log/scp-args")
 if not string match -q "studio.test:$uploaded_path" -- "$scp_args[-1]"
     fail 'scp destination does not use the selected host and remote path'
@@ -214,6 +217,14 @@ if test -e "$uploaded_path"
     fail 'failed scp left a partial screenshot behind'
 end
 pass 'failed scp removes its partial screenshot'
+set -l cleanup_args (cat "$test_log/ssh-args-"(cat "$test_log/ssh-count"))
+if string match -q '*rm -f -- *' -- "$cleanup_args[-1]"
+    fail 'remote cleanup command uses GNU-only -- syntax'
+end
+if not string match -q '*rm -f *' -- "$cleanup_args[-1]"
+    fail 'remote cleanup command is missing rm -f'
+end
+pass 'remote cleanup command is compatible with macOS rm'
 if test -e "$test_log/clipboard"
     fail 'failed upload changed the clipboard'
 end
