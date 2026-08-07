@@ -29,9 +29,12 @@ function tp --description "Manage tmux sessions for the current project director
                 _tp_create $project $next $rest
             end
             if test -n "$name"
-                tmux set-option -t "$project"_"$next" @tp_name "$name"
+                _tp_set_session_name "$project"_"$next" "$name"
             end
             _tp_attach "$project"_"$next"
+
+        case pi p
+            _tp_pi "$project" $argv[2..]
 
         case ls list
             set -l existing (_tp_list_sessions $project)
@@ -161,7 +164,7 @@ function tp --description "Manage tmux sessions for the current project director
                 echo "No session '$target'"
                 return 1
             end
-            tmux set-option -t "$target" @tp_name "$argv[3]"
+            _tp_set_session_name "$target" "$argv[3]"
             tmux set-option -t "$target" set-titles on
             tmux set-option -t "$target" set-titles-string '#{?@tp_name,#T · #{@tp_name},#T}'
             echo "Named $target → $argv[3]"
@@ -178,10 +181,11 @@ function tp --description "Manage tmux sessions for the current project director
                     _tp_attach $target
                 end
             else
-                echo "Usage: tp [new [-n name] [cmd...]|ls|last|kill [n]|name <n> <label>|shot [latest|list [n]|dir]|global [i]|cmux [i|prefix|all]|all|<number>]"
+                echo "Usage: tp [new [-n name] [cmd...]|pi [-n name] [-uf] [pi-args...]|ls|last|kill [n]|name <n> <label>|shot [latest|list [n]|dir]|global [i]|cmux [i|prefix|all]|all|<number>]"
                 echo ""
                 echo "  tp                       Attach to first session (or create _1)"
                 echo "  tp new [-n name] [cmd..] Create next numbered session"
+                echo "  tp pi [-n name] [-uf]    Create the next session running Pi (alias: p)"
                 echo "  tp name <n> <label>      Set/update a session's name"
                 echo "  tp <n>                   Attach to session _n (creates if missing)"
                 echo "  tp last                  Attach to last-created session here (alias: l, -)"
@@ -201,6 +205,69 @@ function tp --description "Manage tmux sessions for the current project director
                 return 1
             end
     end
+end
+
+function _tp_pi --description "Create a named tp session running Pi"
+    set -l project $argv[1]
+    set -e argv[1]
+
+    set -l name ""
+    set -l update_first 0
+    set -l parse_options 1
+    set -l pi_args
+
+    while set -q argv[1]
+        set -l argument $argv[1]
+        set -e argv[1]
+
+        if test "$parse_options" -eq 0
+            set -a pi_args "$argument"
+            continue
+        end
+
+        switch "$argument"
+            case --
+                set parse_options 0
+            case --update-first -uf
+                set update_first 1
+            case --name -n
+                if not set -q argv[1]
+                    echo "Usage: tp pi [--name <name>] [--update-first] [--] [pi-args...]" >&2
+                    return 2
+                end
+                set name $argv[1]
+                set -e argv[1]
+            case '--name=*'
+                set name (string replace -- '--name=' '' "$argument")
+            case '*'
+                set -a pi_args "$argument"
+        end
+    end
+
+    set -l next (_tp_format_number (_tp_next_number "$project"))
+    set -l pi_command pi
+    if test -n "$name"
+        set -a pi_command --name "$name"
+    end
+    set -a pi_command $pi_args
+
+    if test "$update_first" -eq 1
+        # The extra Fish process sequences the update and Pi while preserving
+        # every Pi argument as a distinct value in its own $argv.
+        _tp_create "$project" "$next" fish -c 'pi update --all; and pi $argv' -- $pi_command[2..]
+    else
+        _tp_create "$project" "$next" $pi_command
+    end
+
+    set -l session_name "$project"_"$next"
+    if test -n "$name"
+        _tp_set_session_name "$session_name" "$name"
+    end
+    _tp_attach "$session_name"
+end
+
+function _tp_set_session_name --description "Set the human-readable label on a tp session"
+    tmux set-option -t "$argv[1]" @tp_name "$argv[2]"
 end
 
 function _tp_shot --description "Find screenshots uploaded by tp-shot"
@@ -496,7 +563,7 @@ function _tp_create --description "Create a new tmux session (detached)"
     set -l run_cmd $argv[3..]
 
     if test (count $run_cmd) -gt 0
-        set -l cmd_str (string join -- " " $run_cmd)
+        set -l cmd_str (_tp_serialize_command $run_cmd)
         # Wrapper: run the command under fish (so fish functions/abbrs like `piu`
         # still resolve), then save the final pane contents before tmux tears the
         # session down. _tp_attach replays those contents in the calling terminal,
@@ -513,6 +580,10 @@ function _tp_create --description "Create a new tmux session (detached)"
     # Set terminal window title: use @tp_name if set, otherwise session name
     tmux set-option -t "$session_name" set-titles on
     tmux set-option -t "$session_name" set-titles-string '#{?@tp_name,#T · #{@tp_name},#T}'
+end
+
+function _tp_serialize_command --description "Serialize argv for evaluation by a nested Fish shell"
+    string escape -- $argv | string join ' '
 end
 
 function _tp_attach --description "Attach or switch to a tmux session"

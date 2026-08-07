@@ -34,6 +34,26 @@ Remove it with:
 fisher remove chrisgoddard/tp
 ```
 
+### Local development installation
+
+To use a local clone directly, remove the Fisher-managed copy and link the clone's Fish files into your user configuration. Changes in the clone then take effect without reinstalling the plugin:
+
+```fish
+fisher remove chrisgoddard/tp
+
+for kind in functions completions
+    mkdir -p "$__fish_config_dir/$kind"
+    for source in $kind/*.fish
+        ln -sfn (path resolve "$source") "$__fish_config_dir/$kind/"(path basename "$source")
+    end
+end
+
+# Make this shell autoload the newly linked functions on their next use.
+functions --erase tp tp-shot
+```
+
+Run this from the root of the local `tp` clone. The links are user-wide, so new Fish shells also use the clone automatically.
+
 ### Manual installation
 
 Copy the function and completion files into your Fish configuration:
@@ -54,6 +74,10 @@ tp                            Attach to the first project session, or create 001
 tp new                        Create and attach to the next numbered session
 tp new --name api             Create the next session and label it "api"
 tp new command arguments      Create a session that runs a command
+tp pi                         Create the next session and run Pi in it
+tp pi --name auth             Name both the tmux session and the Pi session "auth"
+tp pi --update-first          Update Pi and its extensions before running Pi
+tp pi --model sonnet:high     Pass all other arguments directly to Pi
 tp 2                          Attach to session 002, creating it if needed
 tp last                       Attach to the highest-numbered project session
 tp ls                         List sessions for the current project
@@ -77,6 +101,7 @@ Common commands also have short aliases:
 | Command | Alias |
 | --- | --- |
 | `new` | `n` |
+| `pi` | `p` |
 | `last` | `l` or `-` |
 | `kill` | `k` |
 | `global` | `g` |
@@ -93,6 +118,24 @@ tp new --name server npm run dev
 ```
 
 When that command exits, `tp` preserves and replays the pane's final output in the calling terminal.
+
+### Run Pi in a new session
+
+`tp pi` (short form: `tp p`) is the Pi-specific form of `tp new pi`:
+
+```fish
+tp pi
+tp pi --name "auth refactor"
+tp p -n "release audit" --thinking high "Review the release changes"
+```
+
+`--name` / `-n` labels the tmux session and passes the same display name to Pi. `--update-first` / `-uf` runs `pi update --all` first and launches Pi only if the update succeeds:
+
+```fish
+tp pi -uf --name "upgrade follow-up"
+```
+
+Every other argument is passed to Pi with its original argument boundaries intact. Use `--` to stop `tp pi` from interpreting its own options; everything after it goes only to Pi.
 
 ## Share laptop screenshots with a remote Pi session
 

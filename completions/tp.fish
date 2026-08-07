@@ -43,6 +43,7 @@ complete -c tp -f
 
 # Primary commands.
 complete -c tp -n '__fish_use_subcommand' -a new -d 'Create the next numbered project session'
+complete -c tp -n '__fish_use_subcommand' -a pi -d 'Create the next numbered session running Pi'
 complete -c tp -n '__fish_use_subcommand' -a ls -d 'List sessions for the current project'
 complete -c tp -n '__fish_use_subcommand' -a list -d 'List sessions for the current project'
 complete -c tp -n '__fish_use_subcommand' -a last -d 'Attach to the last-created project session'
@@ -55,6 +56,7 @@ complete -c tp -n '__fish_use_subcommand' -a all -d 'List all tmux sessions'
 
 # Short aliases.
 complete -c tp -n '__fish_use_subcommand' -a n -d 'Create the next numbered project session'
+complete -c tp -n '__fish_use_subcommand' -a p -d 'Create the next numbered session running Pi'
 complete -c tp -n '__fish_use_subcommand' -a l -d 'Attach to the last-created project session'
 complete -c tp -n '__fish_use_subcommand' -a k -d 'Kill one or all project sessions'
 complete -c tp -n '__fish_use_subcommand' -a g -d 'List or attach to tp sessions across projects'
@@ -69,6 +71,10 @@ complete -c tp -n '__fish_seen_subcommand_from kill k name' -a '(__tp_complete_p
 complete -c tp -n '__fish_seen_subcommand_from new n' -s n -l name -r -d 'Label the new session'
 complete -c tp -n '__fish_seen_subcommand_from new n' \
     -a '(__fish_complete_subcommand --fcs-skip=2 --name -n)'
+
+# Pi-specific options. Unrecognized arguments are passed to Pi unchanged.
+complete -c tp -n '__fish_seen_subcommand_from pi p; and not contains -- -- (commandline -opc)' -s n -l name -r -d 'Name both the tmux and Pi sessions'
+complete -c tp -n '__fish_seen_subcommand_from pi p; and not contains -- -- (commandline -opc)' -o uf -l update-first -d 'Run pi update --all before launching Pi'
 
 # Screenshot lookup actions.
 complete -c tp -n '__fish_seen_subcommand_from shot; and not __fish_seen_subcommand_from latest list ls dir' -a latest -d 'Print the newest uploaded screenshot path'

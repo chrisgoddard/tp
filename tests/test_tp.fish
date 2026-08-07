@@ -38,6 +38,19 @@ assert_equal 0 (_tp_decimal_number 000) 'all-zero input is normalized'
 assert_equal 008 (_tp_format_number 8) 'session numbers are padded'
 assert_equal 1234 (_tp_format_number 1234) 'large session numbers are preserved'
 
+function __tp_print_arguments
+    for argument in $argv
+        printf '<%s>\n' "$argument"
+    end
+end
+
+set -l serialized_command (_tp_serialize_command __tp_print_arguments 'two words' 'semi;colon' 'dollar$sign')
+set -l serialized_output (eval "$serialized_command")
+assert_equal \
+    '<two words>|<semi;colon>|<dollar$sign>' \
+    (string join '|' $serialized_output) \
+    'nested command serialization preserves argument boundaries'
+
 if _tp_decimal_number nope >/dev/null 2>&1
     fail 'non-numeric session numbers must be rejected'
 end
@@ -76,6 +89,58 @@ assert_equal 'demo_001 demo_002 demo_010' (string join ' ' $sessions) 'project l
 
 set -l global_sessions (_tp_list_global)
 assert_equal 'demo_001 demo_002 demo_010 other_001' (string join ' ' $global_sessions) 'global listing is grouped and sorted'
+
+# Exercise the public Pi command without creating or attaching to a real pane.
+functions -c _tp_create __tp_real_create
+functions -c _tp_set_session_name __tp_real_set_session_name
+functions -c _tp_attach __tp_real_attach
+function _tp_create
+    set -g __tp_create_arguments $argv
+end
+function _tp_set_session_name
+    set -g __tp_name_arguments $argv
+end
+function _tp_attach
+    set -g __tp_attach_arguments $argv
+end
+
+set -e __tp_create_arguments __tp_name_arguments __tp_attach_arguments
+tp p -uf -n 'Auth work' --model openai/gpt-5 'initial prompt'; or fail 'tp p failed'
+assert_equal \
+    'demo|011|fish|-c|pi update --all; and pi $argv|--|--name|Auth work|--model|openai/gpt-5|initial prompt' \
+    (string join -- '|' $__tp_create_arguments) \
+    'tp p update-first launches the updater before Pi and preserves Pi arguments'
+assert_equal 'demo_011|Auth work' (string join '|' $__tp_name_arguments) 'tp p applies its name to the tmux session'
+assert_equal 'demo_011' (string join '|' $__tp_attach_arguments) 'tp p attaches to the new session'
+
+set -e __tp_create_arguments __tp_name_arguments __tp_attach_arguments
+tp pi -- --update-first --name pi-only --tools read 'two words'; or fail 'tp pi passthrough failed'
+assert_equal \
+    'demo|011|pi|--update-first|--name|pi-only|--tools|read|two words' \
+    (string join -- '|' $__tp_create_arguments) \
+    'tp pi passes every argument after -- directly to Pi'
+if set -q __tp_name_arguments
+    fail 'tp pi treated a Pi-only --name after -- as a tmux name'
+end
+printf 'ok - tp pi stops interpreting options after --\n'
+
+set -e __tp_create_arguments __tp_name_arguments __tp_attach_arguments
+set -l missing_name_output (tp pi --name 2>&1)
+set -l missing_name_status $status
+assert_equal 2 $missing_name_status 'tp pi rejects a missing name value'
+if set -q __tp_create_arguments
+    fail 'tp pi created a session after rejecting a missing name value'
+end
+if not string match -q 'Usage: tp pi *' -- (string join ' ' $missing_name_output)
+    fail 'tp pi did not show usage after a missing name value'
+end
+printf 'ok - tp pi reports usage for a missing name value\n'
+
+functions --erase _tp_create _tp_set_session_name _tp_attach
+functions -c __tp_real_create _tp_create
+functions -c __tp_real_set_session_name _tp_set_session_name
+functions -c __tp_real_attach _tp_attach
+functions --erase __tp_real_create __tp_real_set_session_name __tp_real_attach
 
 set -gx TP_SHOT_DIR "$test_root/screenshots"
 mkdir -p "$TP_SHOT_DIR"
