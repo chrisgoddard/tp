@@ -48,8 +48,11 @@ for kind in functions completions
     end
 end
 
-# Make this shell autoload the newly linked functions on their next use.
-functions --erase tp tp-shot
+# Reload the newly linked functions and completions in this shell.
+source "$__fish_config_dir/functions/tp.fish"
+source "$__fish_config_dir/functions/tp-shot.fish"
+source "$__fish_config_dir/completions/tp.fish"
+source "$__fish_config_dir/completions/tp-shot.fish"
 ```
 
 Run this from the root of the local `tp` clone. The links are user-wide, so new Fish shells also use the clone automatically.
