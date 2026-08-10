@@ -255,6 +255,20 @@ The detached uploader survives the shortcut's shell process exiting. It uses non
 
 `jq` is used to identify an already-open workspace. Without it, `tp` cannot reliably detect and focus existing tp workspaces.
 
+### SSH origin metadata
+
+Before an outside client attaches, `tp` records the first whitespace-delimited field of that shell's `SSH_CONNECTION` in a server-wide tmux user option keyed by the attaching TTY:
+
+```text
+@tp_ssh_source_<sanitized-client-tty> = <source-ip>
+```
+
+For example, `/dev/pts/7` uses `@tp_ssh_source_dev_pts_7`, while `/dev/ttys003` uses `@tp_ssh_source_dev_ttys003`. `tp` trims the full TTY, rejects empty values, control characters, and values longer than 255 characters, replaces each run outside `[A-Za-z0-9]` with `_`, trims leading and trailing `_`, and rejects an empty result.
+
+Each valid outside attachment overwrites its exact mapping. Missing or invalid SSH metadata unsets that mapping so a reused TTY cannot inherit an old source. When `tp` switches sessions from inside tmux, it reads and preserves the current `#{client_tty}` mapping instead of using the pane's potentially stale `SSH_CONNECTION`.
+
+The stored source is only a token from SSH connection metadata. A consumer must validate it as an IP address before use and should query mappings only for clients currently attached to the relevant session. `tp` does not enumerate stale mappings and does not depend on Pi or Tailscale.
+
 ## How project names work
 
 The project name is the basename of the current working directory, with leading dots removed. Session names use this form:

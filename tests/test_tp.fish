@@ -56,6 +56,193 @@ if _tp_decimal_number nope >/dev/null 2>&1
 end
 printf 'ok - non-numeric session numbers are rejected\n'
 
+assert_equal dev_pts_7 (_tp_sanitize_client_tty '/dev/pts/7') 'Linux client TTYs are sanitized'
+assert_equal dev_ttys003 (_tp_sanitize_client_tty '/dev/ttys003') 'macOS client TTYs are sanitized'
+assert_equal \
+    dev_pts_7_remote_tty \
+    (_tp_sanitize_client_tty '  /dev//pts---7 @ remote!tty  ') \
+    'separator runs in client TTYs become single underscores'
+
+set -l control_tty (printf '/dev/pts/\x017')
+set -l oversized_tty "/dev/"(string repeat -n 251 x)
+for invalid_tty in '' '   ' '///' "$control_tty" "$oversized_tty"
+    if _tp_sanitize_client_tty "$invalid_tty" >/dev/null 2>&1
+        fail 'invalid client TTY was accepted'
+    end
+end
+printf 'ok - empty, control-containing, oversized, and separator-only client TTYs are rejected\n'
+
+# Exercise _tp_attach with a fully mocked tmux client. These checks must not
+# create or attach a real tmux client, including when the test itself runs in tmux.
+set -l fake_tty_bin "$test_root/fake-tty-bin"
+mkdir -p "$fake_tty_bin"
+printf '%s\n' \
+    '#!/usr/bin/env fish' \
+    'printf "%s" "$TP_TEST_CLIENT_TTY"' \
+    'if set -q TP_TEST_TTY_STATUS' \
+    '    exit "$TP_TEST_TTY_STATUS"' \
+    'end' \
+    >"$fake_tty_bin/tty"
+chmod +x "$fake_tty_bin/tty"
+
+set -l original_path $PATH
+set -gx PATH "$fake_tty_bin" $PATH
+set -l had_tmux 0
+set -l original_tmux
+if set -q TMUX
+    set had_tmux 1
+    set original_tmux "$TMUX"
+end
+set -l had_ssh_connection 0
+set -l original_ssh_connection
+if set -q SSH_CONNECTION
+    set had_ssh_connection 1
+    set original_ssh_connection "$SSH_CONNECTION"
+end
+
+functions -c tmux __tp_test_real_tmux
+function tmux
+    switch "$argv[1]"
+        case show-option
+            if test "$argv[-1]" = @tp_close_output
+                set -ga __tp_mock_events read-close
+            else
+                set -ga __tp_mock_events read-source
+                set -g __tp_mock_last_read_option "$argv[-1]"
+                if set -q __tp_mock_option_value
+                    printf '%s\n' "$__tp_mock_option_value"
+                end
+            end
+        case set-option
+            if string match -q '*u*' -- "$argv[2]"
+                set -ga __tp_mock_events clear
+                set -ga __tp_mock_clear_history "$argv[-1]"
+                set -g __tp_mock_last_clear_argc (count $argv)
+            else
+                set -ga __tp_mock_events set
+                set -ga __tp_mock_set_history "$argv[-2]=$argv[-1]"
+                set -g __tp_mock_last_set_option "$argv[-2]"
+                set -g __tp_mock_last_set_source "$argv[-1]"
+                set -g __tp_mock_last_set_argc (count $argv)
+            end
+        case display-message
+            set -ga __tp_mock_events display-tty
+            set -g __tp_mock_last_display_format "$argv[-1]"
+            printf '%s\n' "$__tp_mock_client_tty"
+        case attach-session
+            set -ga __tp_mock_events attach
+            set -g __tp_mock_last_target "$argv[-1]"
+        case switch-client
+            set -ga __tp_mock_events switch
+            set -g __tp_mock_last_target "$argv[-1]"
+        case '*'
+            fail "unexpected mocked tmux command: "(string join ' ' $argv)
+    end
+    return 0
+end
+
+function __tp_reset_attach_mock
+    set -e __tp_mock_events __tp_mock_set_history __tp_mock_clear_history
+    set -e __tp_mock_last_read_option __tp_mock_last_set_option __tp_mock_last_set_source
+    set -e __tp_mock_last_set_argc __tp_mock_last_clear_argc __tp_mock_last_display_format
+    set -e __tp_mock_last_target __tp_mock_client_tty __tp_mock_option_value
+end
+
+set -e TMUX
+set -gx TP_TEST_CLIENT_TTY /dev/pts/7
+set -gx SSH_CONNECTION '203.0.113.10 51234 203.0.113.20 22'
+__tp_reset_attach_mock
+_tp_attach demo_001; or fail 'outside attachment with SSH metadata failed'
+assert_equal \
+    'read-close set attach' \
+    (string join ' ' $__tp_mock_events) \
+    'outside attachment writes metadata before attach-session'
+assert_equal @tp_ssh_source_dev_pts_7 "$__tp_mock_last_set_option" 'outside attachment keys metadata by the sanitized TTY'
+assert_equal 203.0.113.10 "$__tp_mock_last_set_source" 'outside attachment records the first SSH_CONNECTION field'
+assert_equal 4 "$__tp_mock_last_set_argc" 'tmux receives the option and source as separate arguments'
+assert_equal '=demo_001' "$__tp_mock_last_target" 'outside attachment keeps the exact session target'
+
+set -gx SSH_CONNECTION '2001:db8::7 51234 2001:db8::20 22'
+__tp_reset_attach_mock
+_tp_attach demo_001; or fail 'outside attachment overwrite failed'
+assert_equal \
+    '@tp_ssh_source_dev_pts_7=2001:db8::7' \
+    (string join ' ' $__tp_mock_set_history) \
+    'a later valid attachment overwrites the exact TTY mapping'
+
+set -e SSH_CONNECTION
+__tp_reset_attach_mock
+_tp_attach demo_001; or fail 'outside attachment without SSH metadata failed'
+assert_equal \
+    'read-close clear attach' \
+    (string join ' ' $__tp_mock_events) \
+    'missing SSH metadata clears the exact mapping before attachment'
+assert_equal @tp_ssh_source_dev_pts_7 "$__tp_mock_clear_history[1]" 'missing SSH metadata clears only the current TTY mapping'
+assert_equal 3 "$__tp_mock_last_clear_argc" 'tmux receives an argument-safe option unset command'
+
+set -gx SSH_CONNECTION (printf 'bad\x01source 51234 203.0.113.20 22')
+__tp_reset_attach_mock
+_tp_attach demo_001; or fail 'outside attachment with invalid SSH metadata failed'
+assert_equal \
+    '@tp_ssh_source_dev_pts_7' \
+    (string join ' ' $__tp_mock_clear_history) \
+    'control-containing SSH metadata clears the exact mapping'
+
+set -gx TP_TEST_CLIENT_TTY '///'
+set -gx SSH_CONNECTION '203.0.113.10 51234 203.0.113.20 22'
+__tp_reset_attach_mock
+_tp_attach demo_001; or fail 'outside attachment with an invalid TTY failed'
+assert_equal 'read-close attach' (string join ' ' $__tp_mock_events) 'an invalid TTY does not create a metadata option'
+
+set -gx TP_TEST_CLIENT_TTY 'not a tty'
+set -gx TP_TEST_TTY_STATUS 1
+__tp_reset_attach_mock
+_tp_attach demo_001; or fail 'outside attachment after tty failure failed'
+assert_equal 'read-close attach' (string join ' ' $__tp_mock_events) 'a failed tty lookup does not create a metadata option'
+set -e TP_TEST_TTY_STATUS
+
+set -gx TMUX mocked-tmux
+set -gx SSH_CONNECTION '198.51.100.99 51234 203.0.113.20 22'
+__tp_reset_attach_mock
+set -g __tp_mock_client_tty /dev/ttys003
+set -g __tp_mock_option_value 203.0.113.40
+_tp_attach demo_002; or fail 'inside tmux switch with trusted metadata failed'
+assert_equal \
+    'read-close display-tty read-source switch' \
+    (string join ' ' $__tp_mock_events) \
+    'inside tmux reuses the current client mapping before switching'
+assert_equal '#{client_tty}' "$__tp_mock_last_display_format" 'inside tmux reads the current client TTY'
+assert_equal @tp_ssh_source_dev_ttys003 "$__tp_mock_last_read_option" 'inside tmux reads the current client mapping'
+assert_equal '=demo_002' "$__tp_mock_last_target" 'inside tmux keeps the exact switch target'
+assert_equal 0 (count $__tp_mock_set_history) 'inside tmux does not overwrite metadata from SSH_CONNECTION'
+assert_equal 0 (count $__tp_mock_clear_history) 'inside tmux does not clear a trusted client mapping'
+
+__tp_reset_attach_mock
+set -g __tp_mock_client_tty /dev/ttys003
+_tp_attach demo_003; or fail 'inside tmux switch without trusted metadata failed'
+assert_equal \
+    'read-close display-tty read-source switch' \
+    (string join ' ' $__tp_mock_events) \
+    'inside tmux leaves a missing client mapping absent and still switches'
+assert_equal 0 (count $__tp_mock_set_history) 'inside tmux does not guess a missing source'
+assert_equal 0 (count $__tp_mock_clear_history) 'inside tmux does not mutate an absent source mapping'
+
+functions --erase tmux __tp_reset_attach_mock
+functions -c __tp_test_real_tmux tmux
+functions --erase __tp_test_real_tmux
+set -gx PATH $original_path
+set -e TP_TEST_CLIENT_TTY TP_TEST_TTY_STATUS
+if test "$had_tmux" -eq 1
+    set -gx TMUX "$original_tmux"
+else
+    set -e TMUX
+end
+if test "$had_ssh_connection" -eq 1
+    set -gx SSH_CONNECTION "$original_ssh_connection"
+else
+    set -e SSH_CONNECTION
+end
+
 mkdir -p "$test_root/demo"
 cd "$test_root/demo"
 

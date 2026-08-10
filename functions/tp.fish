@@ -586,11 +586,91 @@ function _tp_serialize_command --description "Serialize argv for evaluation by a
     string escape -- $argv | string join ' '
 end
 
+function _tp_sanitize_client_tty --description "Sanitize a tmux client TTY for use in an option name"
+    if test (count $argv) -ne 1
+        return 1
+    end
+
+    set -l client_tty (string trim -- "$argv[1]")
+    if test -z "$client_tty"; or test (string length -- "$client_tty") -gt 255
+        return 1
+    end
+    if string match -qr '[[:cntrl:]]' -- "$client_tty"
+        return 1
+    end
+
+    set -l sanitized (string replace -ra '[^A-Za-z0-9]+' '_' -- "$client_tty" | string trim -c '_')
+    if test -z "$sanitized"
+        return 1
+    end
+
+    printf '%s\n' "$sanitized"
+end
+
+function _tp_ssh_connection_source --description "Return the source token from SSH_CONNECTION"
+    if not set -q SSH_CONNECTION
+        return 1
+    end
+
+    set -l connection (string trim -- "$SSH_CONNECTION")
+    if test -z "$connection"
+        return 1
+    end
+
+    set -l source (string match -r '^[^[:space:]]+' -- "$connection")
+    if test (count $source) -ne 1; or test -z "$source"
+        return 1
+    end
+    if string match -qr '[[:cntrl:][:space:]]' -- "$source"
+        return 1
+    end
+
+    printf '%s\n' "$source"
+end
+
+function _tp_ssh_source_option --description "Return the tmux option for a client TTY"
+    set -l sanitized (_tp_sanitize_client_tty "$argv")
+    or return 1
+    printf '@tp_ssh_source_%s\n' "$sanitized"
+end
+
+function _tp_prepare_ssh_source_for_attach --description "Update or preserve the current client's SSH source"
+    set -l client_tty
+    if set -q TMUX
+        set client_tty (tmux display-message -p '#{client_tty}' 2>/dev/null)
+        set -l option_name (_tp_ssh_source_option $client_tty)
+        or return 0
+
+        # Source mappings are server-global, so the current client's exact option
+        # follows it across a session switch. Read it to reuse only trusted metadata;
+        # never replace it with the pane's potentially stale SSH_CONNECTION value.
+        tmux show-option -gqv "$option_name" >/dev/null 2>&1
+        return 0
+    end
+
+    set client_tty (command tty 2>/dev/null)
+    if test $status -ne 0
+        return 0
+    end
+    set -l option_name (_tp_ssh_source_option $client_tty)
+    or return 0
+
+    set -l source (_tp_ssh_connection_source)
+    if test $status -eq 0
+        tmux set-option -gq "$option_name" "$source"
+    else
+        # Clear this exact mapping so a reused terminal cannot inherit its source.
+        tmux set-option -guq "$option_name"
+    end
+end
+
 function _tp_attach --description "Attach or switch to a tmux session"
     set -l session_name $argv[1]
     # show-option/set-option take a target-pane, where tmux's `=name` exact-
     # session syntax does not resolve; the plain full session name does.
     set -l close_output (tmux show-option -t "$session_name" -v @tp_close_output 2>/dev/null)
+
+    _tp_prepare_ssh_source_for_attach
 
     if set -q TMUX
         if test -n "$close_output"
