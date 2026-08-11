@@ -8,6 +8,8 @@ Sessions are named from the current directory and a zero-padded number. Running 
 
 - [Fish](https://fishshell.com/)
 - [tmux](https://github.com/tmux/tmux)
+- Optional: [Pi](https://github.com/earendil-works/pi) for `tp pi`
+- Optional: [Oh My Pi](https://github.com/can1357/oh-my-pi) for `tp omp`
 - Optional: [cmux](https://github.com/manaflow-ai/cmux) and [`jq`](https://jqlang.github.io/jq/) for the `tp cmux` integration
 - For screenshot sharing: a macOS capture computer with `ssh` access to the remote computer
 - Optional: [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) for reliable background upload notifications
@@ -81,6 +83,10 @@ tp pi                         Create the next session and run Pi in it
 tp pi --name auth             Name both the tmux session and the Pi session "auth"
 tp pi --update-first          Update Pi and its extensions before running Pi
 tp pi --model sonnet:high     Pass all other arguments directly to Pi
+tp omp                        Create the next session and run Oh My Pi in it
+tp omp --name auth            Label the tmux session "auth"
+tp omp --update-first         Update Oh My Pi before running it
+tp omp --model claude-sonnet  Pass all other arguments directly to Oh My Pi
 tp 2                          Attach to session 002, creating it if needed
 tp last                       Attach to the highest-numbered project session
 tp ls                         List sessions for the current project
@@ -105,6 +111,7 @@ Common commands also have short aliases:
 | --- | --- |
 | `new` | `n` |
 | `pi` | `p` |
+| `omp` | `o` |
 | `last` | `l` or `-` |
 | `kill` | `k` |
 | `global` | `g` |
@@ -139,6 +146,24 @@ tp pi -uf --name "upgrade follow-up"
 ```
 
 Every other argument is passed to Pi with its original argument boundaries intact. Use `--` to stop `tp pi` from interpreting its own options; everything after it goes only to Pi.
+
+### Run Oh My Pi in a new session
+
+`tp omp` (short form: `tp o`) is the Oh My Pi-specific form of `tp new omp`:
+
+```fish
+tp omp
+tp omp --name "auth refactor"
+tp o -n "release audit" --thinking high "Review the release changes"
+```
+
+`--name` / `-n` labels the tmux session. Oh My Pi has no corresponding session-name launch flag, so `tp` does not pass this option to `omp`. `--update-first` / `-uf` runs `omp update` first and launches Oh My Pi only if the update succeeds:
+
+```fish
+tp omp -uf --name "upgrade follow-up"
+```
+
+Every other argument is passed to Oh My Pi with its original argument boundaries intact. Use `--` to stop `tp omp` from interpreting its own options; everything after it goes only to Oh My Pi.
 
 ## Share laptop screenshots with a remote Pi session
 

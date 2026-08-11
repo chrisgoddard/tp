@@ -36,6 +36,9 @@ function tp --description "Manage tmux sessions for the current project director
         case pi p
             _tp_pi "$project" $argv[2..]
 
+        case omp o
+            _tp_omp "$project" $argv[2..]
+
         case ls list
             set -l existing (_tp_list_sessions $project)
             if test (count $existing) -eq 0
@@ -181,11 +184,12 @@ function tp --description "Manage tmux sessions for the current project director
                     _tp_attach $target
                 end
             else
-                echo "Usage: tp [new [-n name] [cmd...]|pi [-n name] [-uf] [pi-args...]|ls|last|kill [n]|name <n> <label>|shot [latest|list [n]|dir]|global [i]|cmux [i|prefix|all]|all|<number>]"
+                echo "Usage: tp [new [-n name] [cmd...]|pi [-n name] [-uf] [pi-args...]|omp [-n name] [-uf] [omp-args...]|ls|last|kill [n]|name <n> <label>|shot [latest|list [n]|dir]|global [i]|cmux [i|prefix|all]|all|<number>]"
                 echo ""
                 echo "  tp                       Attach to first session (or create _1)"
                 echo "  tp new [-n name] [cmd..] Create next numbered session"
                 echo "  tp pi [-n name] [-uf]    Create the next session running Pi (alias: p)"
+                echo "  tp omp [-n name] [-uf]   Create the next session running OMP (alias: o)"
                 echo "  tp name <n> <label>      Set/update a session's name"
                 echo "  tp <n>                   Attach to session _n (creates if missing)"
                 echo "  tp last                  Attach to last-created session here (alias: l, -)"
@@ -257,6 +261,59 @@ function _tp_pi --description "Create a named tp session running Pi"
         _tp_create "$project" "$next" fish -c 'pi update --all; and pi $argv' -- $pi_command[2..]
     else
         _tp_create "$project" "$next" $pi_command
+    end
+
+    set -l session_name "$project"_"$next"
+    if test -n "$name"
+        _tp_set_session_name "$session_name" "$name"
+    end
+    _tp_attach "$session_name"
+end
+
+function _tp_omp --description "Create a named tp session running Oh My Pi"
+    set -l project $argv[1]
+    set -e argv[1]
+
+    set -l name ""
+    set -l update_first 0
+    set -l parse_options 1
+    set -l omp_args
+
+    while set -q argv[1]
+        set -l argument $argv[1]
+        set -e argv[1]
+
+        if test "$parse_options" -eq 0
+            set -a omp_args "$argument"
+            continue
+        end
+
+        switch "$argument"
+            case --
+                set parse_options 0
+            case --update-first -uf
+                set update_first 1
+            case --name -n
+                if not set -q argv[1]
+                    echo "Usage: tp omp [--name <name>] [--update-first] [--] [omp-args...]" >&2
+                    return 2
+                end
+                set name $argv[1]
+                set -e argv[1]
+            case '--name=*'
+                set name (string replace -- '--name=' '' "$argument")
+            case '*'
+                set -a omp_args "$argument"
+        end
+    end
+
+    set -l next (_tp_format_number (_tp_next_number "$project"))
+    if test "$update_first" -eq 1
+        # OMP does not have Pi's --name launch flag. The tp name remains a
+        # tmux-only label while all OMP arguments retain their boundaries.
+        _tp_create "$project" "$next" fish -c 'omp update; and omp $argv' -- $omp_args
+    else
+        _tp_create "$project" "$next" omp $omp_args
     end
 
     set -l session_name "$project"_"$next"

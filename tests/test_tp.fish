@@ -90,7 +90,7 @@ assert_equal 'demo_001 demo_002 demo_010' (string join ' ' $sessions) 'project l
 set -l global_sessions (_tp_list_global)
 assert_equal 'demo_001 demo_002 demo_010 other_001' (string join ' ' $global_sessions) 'global listing is grouped and sorted'
 
-# Exercise the public Pi command without creating or attaching to a real pane.
+# Exercise the public agent commands without creating or attaching to a real pane.
 functions -c _tp_create __tp_real_create
 functions -c _tp_set_session_name __tp_real_set_session_name
 functions -c _tp_attach __tp_real_attach
@@ -135,6 +135,38 @@ if not string match -q 'Usage: tp pi *' -- (string join ' ' $missing_name_output
     fail 'tp pi did not show usage after a missing name value'
 end
 printf 'ok - tp pi reports usage for a missing name value\n'
+
+set -e __tp_create_arguments __tp_name_arguments __tp_attach_arguments
+tp o -uf -n 'Auth work' --model openai/gpt-5 'initial prompt'; or fail 'tp o failed'
+assert_equal \
+    'demo|011|fish|-c|omp update; and omp $argv|--|--model|openai/gpt-5|initial prompt' \
+    (string join -- '|' $__tp_create_arguments) \
+    'tp o update-first launches the updater before OMP and preserves OMP arguments'
+assert_equal 'demo_011|Auth work' (string join '|' $__tp_name_arguments) 'tp o applies its name to the tmux session'
+assert_equal 'demo_011' (string join '|' $__tp_attach_arguments) 'tp o attaches to the new session'
+
+set -e __tp_create_arguments __tp_name_arguments __tp_attach_arguments
+tp omp -- --update-first --name omp-only --tools read 'two words'; or fail 'tp omp passthrough failed'
+assert_equal \
+    'demo|011|omp|--update-first|--name|omp-only|--tools|read|two words' \
+    (string join -- '|' $__tp_create_arguments) \
+    'tp omp passes every argument after -- directly to OMP'
+if set -q __tp_name_arguments
+    fail 'tp omp treated an OMP-only --name after -- as a tmux name'
+end
+printf 'ok - tp omp stops interpreting options after --\n'
+
+set -e __tp_create_arguments __tp_name_arguments __tp_attach_arguments
+set -l missing_omp_name_output (tp omp --name 2>&1)
+set -l missing_omp_name_status $status
+assert_equal 2 $missing_omp_name_status 'tp omp rejects a missing name value'
+if set -q __tp_create_arguments
+    fail 'tp omp created a session after rejecting a missing name value'
+end
+if not string match -q 'Usage: tp omp *' -- (string join ' ' $missing_omp_name_output)
+    fail 'tp omp did not show usage after a missing name value'
+end
+printf 'ok - tp omp reports usage for a missing name value\n'
 
 functions --erase _tp_create _tp_set_session_name _tp_attach
 functions -c __tp_real_create _tp_create
@@ -189,6 +221,19 @@ set -l global_completion_values (__tp_complete_global_session_indexes | string r
 assert_equal '1 2 3 4' (string join ' ' $global_completion_values) 'global completions contain one-based indexes'
 set -l global_completion_sessions (__tp_complete_global_session_indexes | string replace -r '^[^\t]+\t' '')
 assert_equal 'demo_001 demo_002 demo_010 other_001' (string join ' ' $global_completion_sessions) 'global completion indexes match list order'
+
+set -l tp_subcommands (complete -C 'tp ' | string replace -r '\t.*$' '')
+if not contains -- omp $tp_subcommands; or not contains -- o $tp_subcommands
+    fail 'tp completions do not include omp and its short alias'
+end
+printf 'ok - tp completions include omp and its short alias\n'
+set -l omp_options (complete -C 'tp omp -' | string replace -r '\t.*$' '')
+for option in -n --name -uf --update-first
+    if not contains -- $option $omp_options
+        fail "tp omp completion does not include $option"
+    end
+end
+printf 'ok - tp omp completions include tp-specific options\n'
 
 tp kill 2 >/dev/null; or fail 'tp kill 2 failed'
 if tmux has-session -t '=demo_002' 2>/dev/null
