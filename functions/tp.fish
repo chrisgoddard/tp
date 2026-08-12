@@ -670,7 +670,7 @@ function _tp_prepare_ssh_source_for_attach --description "Update or preserve the
     set -l source (_tp_ssh_connection_source)
     if test $status -ne 0
         # Clear this exact mapping so a reused terminal cannot inherit its source.
-        tmux set-option -guq "$option_name"
+        tmux set-option -guq "$option_name"; or return 0
         return 0
     end
 
