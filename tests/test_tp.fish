@@ -1,10 +1,14 @@
 #!/usr/bin/env fish
 
 set -g test_socket "tp-test-"(random)"-"(random)
+set -g real_socket ""
 set -g test_root (mktemp -d -t tp-test.XXXXXX)
 
 function __tp_test_cleanup --on-event fish_exit
     command tmux -L "$test_socket" kill-server >/dev/null 2>&1
+    if test -n "$real_socket"
+        command tmux -L "$real_socket" kill-server >/dev/null 2>&1
+    end
     rm -rf "$test_root"
 end
 
@@ -113,6 +117,8 @@ function tmux
                     printf '%s\n' "$__tp_mock_option_value"
                 end
             end
+        case show-hooks
+            set -ga __tp_mock_events check-hook
         case set-option
             if string match -q '*u*' -- "$argv[2]"
                 set -ga __tp_mock_events clear
@@ -135,8 +141,15 @@ function tmux
         case switch-client
             set -ga __tp_mock_events switch
             set -g __tp_mock_last_target "$argv[-1]"
+        case set-hook
+            if string match -q '*u*' -- "$argv[2]"
+                set -ga __tp_mock_events clear-hook
+            else
+                set -ga __tp_mock_events set-hook
+                set -g __tp_mock_last_hook_command "$argv[-1]"
+            end
         case '*'
-            fail "unexpected mocked tmux command: "(string join ' ' $argv)
+            fail "unexpected mocked tmux command: "(string join ' ' -- $argv)
     end
     return 0
 end
@@ -144,7 +157,7 @@ end
 function __tp_reset_attach_mock
     set -e __tp_mock_events __tp_mock_set_history __tp_mock_clear_history
     set -e __tp_mock_last_read_option __tp_mock_last_set_option __tp_mock_last_set_source
-    set -e __tp_mock_last_set_argc __tp_mock_last_clear_argc __tp_mock_last_display_format
+    set -e __tp_mock_last_hook_command __tp_mock_last_set_argc __tp_mock_last_clear_argc __tp_mock_last_display_format
     set -e __tp_mock_last_target __tp_mock_client_tty __tp_mock_option_value
 end
 
@@ -154,21 +167,23 @@ set -gx SSH_CONNECTION '203.0.113.10 51234 203.0.113.20 22'
 __tp_reset_attach_mock
 _tp_attach demo_001; or fail 'outside attachment with SSH metadata failed'
 assert_equal \
-    'read-close set attach' \
+    'read-close clear check-hook set set set set-hook attach clear-hook clear clear' \
     (string join ' ' $__tp_mock_events) \
-    'outside attachment writes metadata before attach-session'
-assert_equal @tp_ssh_source_dev_pts_7 "$__tp_mock_last_set_option" 'outside attachment keys metadata by the sanitized TTY'
-assert_equal 203.0.113.10 "$__tp_mock_last_set_source" 'outside attachment records the first SSH_CONNECTION field'
-assert_equal 4 "$__tp_mock_last_set_argc" 'tmux receives the option and source as separate arguments'
+    'outside attachment installs metadata stamping before attach-session'
+set -l hook_parts (string split ' ' -- "$__tp_mock_last_hook_command")
+if not contains -- 'actual_tty=#{client_tty};' $hook_parts; or not contains -- 'created=#{client_created};' $hook_parts; or not contains -- 'ip=$source' $hook_parts; or not contains -- 'created=$created";' $hook_parts
+    fail 'outside hook does not stamp the required metadata value shape'
+end
 assert_equal '=demo_001' "$__tp_mock_last_target" 'outside attachment keeps the exact session target'
 
 set -gx SSH_CONNECTION '2001:db8::7 51234 2001:db8::20 22'
 __tp_reset_attach_mock
 _tp_attach demo_001; or fail 'outside attachment overwrite failed'
-assert_equal \
-    '@tp_ssh_source_dev_pts_7=2001:db8::7' \
-    (string join ' ' $__tp_mock_set_history) \
-    'a later valid attachment overwrites the exact TTY mapping'
+set hook_parts (string split ' ' -- "$__tp_mock_last_hook_command")
+if not contains -- 'ip=$source' $hook_parts
+    fail 'outside hook does not preserve IPv6 sources'
+end
+printf 'ok - outside hook preserves IPv6 sources\n'
 
 set -e SSH_CONNECTION
 __tp_reset_attach_mock
@@ -205,7 +220,7 @@ set -gx TMUX mocked-tmux
 set -gx SSH_CONNECTION '198.51.100.99 51234 203.0.113.20 22'
 __tp_reset_attach_mock
 set -g __tp_mock_client_tty /dev/ttys003
-set -g __tp_mock_option_value 203.0.113.40
+set -g __tp_mock_option_value 'v1 ip=203.0.113.40 created=123456789'
 _tp_attach demo_002; or fail 'inside tmux switch with trusted metadata failed'
 assert_equal \
     'read-close display-tty read-source switch' \
@@ -242,6 +257,132 @@ if test "$had_ssh_connection" -eq 1
 else
     set -e SSH_CONNECTION
 end
+
+# Verify against a real throwaway tmux server. One Fish process uses one pty for
+# a tp attach followed by a plain attach, so the second client reuses the same
+# TTY while receiving a different client_created value.
+set -g real_socket "tp-real-"(random)"-"(random)
+set -l real_helper "$test_root/real-attach.fish"
+set -l real_log "$test_root/real-attach.log"
+printf '%s\n' \
+    'set -g real_socket $argv[1]' \
+    'set -g repo_root $argv[2]' \
+    'function tmux' \
+    '    env TERM=xterm tmux -L "$real_socket" $argv' \
+    'end' \
+    'source "$repo_root/functions/tp.fish"' \
+    'set -e TMUX' \
+    'set -gx SSH_CONNECTION '\''203.0.113.10 51234 203.0.113.20 22'\''' \
+    '_tp_attach real_001' \
+    'sleep 5' \
+    'set -e SSH_CONNECTION' \
+    'tmux attach-session -t =real_001' \
+    >"$real_helper"
+command tmux -L "$real_socket" -f /dev/null new-session -d -s real_001 'sleep 30'
+set -l real_command (string escape -- fish "$real_helper" "$real_socket" (path resolve "$repo_root"))
+command script -qefc "$real_command" "$real_log" >/dev/null 2>&1 &
+set -l real_attach_pid $last_pid
+set -l first_client
+for attempt in (seq 1 100)
+    set first_client (command tmux -L "$real_socket" -f /dev/null list-clients -F '#{client_tty}|#{client_created}' 2>/dev/null)
+    if test (count $first_client) -gt 0
+        break
+    end
+    sleep 0.1
+end
+if test (count $first_client) -ne 1
+    fail 'real tmux attach did not create a client'
+end
+set -l first_fields (string split '|' -- "$first_client")
+set -l first_tty "$first_fields[1]"
+set -l first_created "$first_fields[2]"
+set -l real_option (_tp_ssh_source_option "$first_tty")
+set -l first_value
+for attempt in (seq 1 100)
+    set first_value (command tmux -L "$real_socket" -f /dev/null show-option -gqv "$real_option" 2>/dev/null)
+    if test -n "$first_value"
+        break
+    end
+    sleep 0.1
+end
+assert_equal "v1 ip=203.0.113.10 created=$first_created" "$first_value" 'real client-attached hook records the real client_created'
+command tmux -L "$real_socket" -f /dev/null detach-client -t "$first_tty"
+
+set -l second_client
+for attempt in (seq 1 100)
+    set second_client (command tmux -L "$real_socket" -f /dev/null list-clients -F '#{client_tty}|#{client_created}' 2>/dev/null)
+    if test (count $second_client) -eq 1
+        set -l second_fields (string split '|' -- "$second_client")
+        if test "$second_fields[2]" != "$first_created"
+            break
+        end
+    end
+    sleep 0.1
+end
+if test (count $second_client) -ne 1
+    fail 'real plain attach did not create a second client'
+end
+set -l second_fields (string split '|' -- "$second_client")
+assert_equal "$first_tty" "$second_fields[1]" 'plain reattach reuses the original client TTY'
+if test "$first_created" = "$second_fields[2]"
+    fail 'plain reattach unexpectedly reused client_created'
+end
+set -l stale_value (command tmux -L "$real_socket" -f /dev/null show-option -gqv "$real_option")
+assert_equal "$first_value" "$stale_value" 'stale source remains bound to the previous client_created'
+command tmux -L "$real_socket" -f /dev/null detach-client -t "$first_tty"
+wait $real_attach_pid
+set -l pending_options (command tmux -L "$real_socket" -f /dev/null show-options -g 2>/dev/null | string match -r '^@tp_ssh_(source|tty|owner)_pending_')
+assert_equal 0 (count $pending_options) 'outside attach cleanup removes pending records'
+
+# An abandoned owner must not let a later plain attach mint a fresh mapping.
+set -l abandon_socket "tp-abandon-"(random)"-"(random)
+set -l abandon_helper "$test_root/abandon.fish"
+set -l abandon_tty_file "$test_root/abandon-tty"
+printf '%s\n' \
+    'set -g abandon_socket $argv[1]' \
+    'set -g repo_root $argv[2]' \
+    'function tmux' \
+    '    command tmux -L "$abandon_socket" $argv' \
+    'end' \
+    'source "$repo_root/functions/tp.fish"' \
+    'set -e TMUX' \
+    'set -gx SSH_CONNECTION '\''203.0.113.77 51234 203.0.113.20 22'\''' \
+    'set -l tty (command tty)' \
+    'printf "%s" "$tty" > "$argv[3]"' \
+    'set -l hook (_tp_prepare_ssh_source_for_attach)' \
+    'printf "%s" "$hook"' \
+    >"$abandon_helper"
+command tmux -L "$abandon_socket" -f /dev/null new-session -d -s abandoned 'sleep 30'
+set -l abandon_command (string escape -- fish "$abandon_helper" "$abandon_socket" (path resolve "$repo_root") "$abandon_tty_file")
+command script -qefc "$abandon_command" "$test_root/abandon.log" >/dev/null 2>&1 &
+set -l abandon_pid $last_pid
+set -l abandon_tty
+for attempt in (seq 1 100)
+    if test -s "$abandon_tty_file"
+        set abandon_tty (string collect < "$abandon_tty_file")
+        break
+    end
+    sleep 0.1
+end
+if test -z "$abandon_tty"
+    fail 'abandoned owner did not expose its TTY'
+end
+set -l abandon_option (_tp_ssh_source_option "$abandon_tty")
+kill "$abandon_pid" 2>/dev/null
+env TERM=xterm tmux -L "$abandon_socket" -f /dev/null attach-session -t abandoned < /dev/null >/dev/null 2>&1 &
+set -l plain_pid $last_pid
+for attempt in (seq 1 100)
+    set -l clients (command tmux -L "$abandon_socket" -f /dev/null list-clients -F '#{client_tty}' 2>/dev/null)
+    if test (count $clients) -gt 0
+        break
+    end
+    sleep 0.1
+end
+set -l abandoned_value (command tmux -L "$abandon_socket" -f /dev/null show-option -gqv "$abandon_option" 2>/dev/null)
+assert_equal '' "$abandoned_value" 'abandoned hook cannot mint a mapping for a later plain attach'
+command tmux -L "$abandon_socket" -f /dev/null detach-client -a >/dev/null 2>&1
+wait $plain_pid 2>/dev/null
+command tmux -L "$abandon_socket" -f /dev/null kill-server >/dev/null 2>&1
 
 mkdir -p "$test_root/demo"
 cd "$test_root/demo"

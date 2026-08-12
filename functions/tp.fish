@@ -1188,6 +1188,18 @@ function _tp_ssh_source_option --description "Return the tmux option for a clien
     printf '@tp_ssh_source_%s\n' "$sanitized"
 end
 
+function _tp_cleanup_ssh_source_hook --description "Clear an outside-attach SSH source hook and pending values"
+    if test (count $argv) -ne 2; or not string match -qr '^[0-9]+$' -- "$argv[1]"; or not string match -qr '^[0-9]+_[0-9]+$' -- "$argv[2]"
+        return 0
+    end
+
+    set -l hook_index $argv[1]
+    set -l pending_id $argv[2]
+    tmux set-hook -gu "client-attached[$hook_index]" >/dev/null 2>&1
+    tmux set-option -guq "@tp_ssh_source_pending_$pending_id" >/dev/null 2>&1
+    tmux set-option -guq "@tp_ssh_tty_pending_$pending_id" >/dev/null 2>&1
+end
+
 function _tp_prepare_ssh_source_for_attach --description "Update or preserve the current client's SSH source"
     set -l client_tty
     if set -q TMUX
@@ -1196,8 +1208,8 @@ function _tp_prepare_ssh_source_for_attach --description "Update or preserve the
         or return 0
 
         # Source mappings are server-global, so the current client's exact option
-        # follows it across a session switch. Read it to reuse only trusted metadata;
-        # never replace it with the pane's potentially stale SSH_CONNECTION value.
+        # follows it across a session switch. Read it to preserve the current
+        # mapping; never replace it with the pane's potentially stale SSH_CONNECTION.
         tmux show-option -gqv "$option_name" >/dev/null 2>&1
         return 0
     end
@@ -1210,12 +1222,58 @@ function _tp_prepare_ssh_source_for_attach --description "Update or preserve the
     or return 0
 
     set -l source (_tp_ssh_connection_source)
-    if test $status -eq 0
-        tmux set-option -gq "$option_name" "$source"
-    else
+    if test $status -ne 0
         # Clear this exact mapping so a reused terminal cannot inherit its source.
-        tmux set-option -guq "$option_name"
+        tmux set-option -guq "$option_name"; or return 0
+        return 0
     end
+
+    # The outside client does not exist until attach-session starts. Keep the
+    # mapping absent until its client-attached hook can stamp the real
+    # client_created value. Pending values are cleared by the hook and by
+    # _tp_attach after attach-session returns.
+    tmux set-option -guq "$option_name"
+
+    # Fish assigns a distinct PID to each concurrent shell, so using it as the
+    # hook slot prevents two outside attaches from sharing a slot. A stale hook
+    # at a reused PID gets a fresh random slot.
+    set -l hook_index $fish_pid
+    set -l existing_hook (tmux show-hooks -g "client-attached[$hook_index]" 2>/dev/null | string split -m1 ' ')
+    while test -n "$existing_hook[2]"
+        set hook_index (random)
+        set existing_hook (tmux show-hooks -g "client-attached[$hook_index]" 2>/dev/null | string split -m1 ' ')
+    end
+    set -l pending_id "$fish_pid"_"$hook_index"
+    set -l pending_source "@tp_ssh_source_pending_$pending_id"
+    set -l pending_tty "@tp_ssh_tty_pending_$pending_id"
+    set -l pending_owner "@tp_ssh_owner_pending_$pending_id"
+    set -l cleanup_command "tmux set-hook -gu client-attached[$hook_index]; tmux set-option -guq \"$pending_source\"; tmux set-option -guq \"$pending_tty\"; tmux set-option -guq \"$pending_owner\""
+    tmux set-option -gq "$pending_source" "$source"
+    or return 0
+    tmux set-option -gq "$pending_tty" "$client_tty"
+    if test $status -ne 0
+        _tp_cleanup_ssh_source_hook "$hook_index" "$pending_id"
+        return 0
+    end
+    tmux set-option -gq "$pending_owner" "$fish_pid"
+    if test $status -ne 0
+        _tp_cleanup_ssh_source_hook "$hook_index" "$pending_id"
+        return 0
+    end
+
+    # run-shell expands client_created and client_tty in the hook's client
+    # context. The source itself is read as a quoted shell variable so the
+    # existing token validation cannot become shell syntax.
+    set -l hook_script "source=\$(tmux show-option -gqv \"$pending_source\"); expected_tty=\$(tmux show-option -gqv \"$pending_tty\"); owner=\$(tmux show-option -gqv \"$pending_owner\"); actual_tty=#{client_tty}; created=#{client_created}; if test -n \"\$source\" && kill -0 \"\$owner\" 2>/dev/null && test \"\$actual_tty\" = \"\$expected_tty\"; then case \"\$created\" in \"\"|*[!0-9]*) ;; *) if test \"\${#created}\" -le 15; then tmux set-option -gq \"$option_name\" \"v1 ip=\$source created=\$created\"; fi ;; esac; fi; $cleanup_command"
+    set -l hook_command "run-shell "(string escape -- "$hook_script")
+    tmux set-hook -g "client-attached[$hook_index]" "$hook_command"
+    if test $status -ne 0
+        _tp_cleanup_ssh_source_hook "$hook_index" "$pending_id"
+        tmux set-option -guq "$option_name"
+        return 0
+    end
+
+    printf '%s\n' "$hook_index" "$pending_id"
 end
 
 function _tp_attach --description "Attach or switch to a tmux session"
@@ -1224,7 +1282,7 @@ function _tp_attach --description "Attach or switch to a tmux session"
     # session syntax does not resolve; the plain full session name does.
     set -l close_output (tmux show-option -t "$session_name" -v @tp_close_output 2>/dev/null)
 
-    _tp_prepare_ssh_source_for_attach
+    set -l ssh_source_hook (_tp_prepare_ssh_source_for_attach)
 
     if set -q TMUX
         if test -n "$close_output"
@@ -1246,6 +1304,7 @@ function _tp_attach --description "Attach or switch to a tmux session"
         end
     else
         tmux attach-session -t "=$session_name"
+        _tp_cleanup_ssh_source_hook $ssh_source_hook[1] $ssh_source_hook[2]
 
         # A tmux client uses the alternate screen, so its final pane would normally
         # disappear when the session exits. Replay the snapshot after returning to
