@@ -268,7 +268,7 @@ printf '%s\n' \
     'set -g real_socket $argv[1]' \
     'set -g repo_root $argv[2]' \
     'function tmux' \
-    '    command tmux -L "$real_socket" $argv' \
+    '    env TERM=xterm tmux -L "$real_socket" $argv' \
     'end' \
     'source "$repo_root/functions/tp.fish"' \
     'set -e TMUX' \
@@ -369,7 +369,7 @@ if test -z "$abandon_tty"
 end
 set -l abandon_option (_tp_ssh_source_option "$abandon_tty")
 kill "$abandon_pid" 2>/dev/null
-command tmux -L "$abandon_socket" -f /dev/null attach-session -t abandoned < /dev/null >/dev/null 2>&1 &
+env TERM=xterm tmux -L "$abandon_socket" -f /dev/null attach-session -t abandoned < /dev/null >/dev/null 2>&1 &
 set -l plain_pid $last_pid
 for attempt in (seq 1 100)
     set -l clients (command tmux -L "$abandon_socket" -f /dev/null list-clients -F '#{client_tty}' 2>/dev/null)
