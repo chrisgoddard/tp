@@ -291,14 +291,31 @@ Alongside the id, a listing shows what each Pi session is doing:
   003  →  demo_003              pi:019ff69e-6014 · ○ idle 2h · 8% · claude-opus-4-8
 ```
 
-| Marker | State | Meaning |
-| --- | --- | --- |
-| `⏸` | `blocked` | Waiting for you — a guard prompt or a question |
-| `●` | `tool` | Running the named tool |
-| `●` | `thinking` | Working, between tools |
-| `○` | `idle` | Waiting for your next message |
+| Marker | State | Colour | Meaning |
+| --- | --- | --- | --- |
+| `⏸` | `blocked` | yellow | Waiting for you — a guard prompt or a question |
+| `●` | `tool` | cyan | Running the named tool |
+| `●` | `thinking` | blue | Working, between tools |
+| `○` | `idle` | grey | Waiting for your next message |
 
 Then time in that state, context window used, and the model.
+
+Every state carries both a marker and a colour, so the meaning survives a
+monochrome terminal, a pipe, and colour blindness. Yellow marks the only state
+that needs you; red is kept for a context window near its limit (85% or more,
+amber from 70%), where the next thing to happen is a compaction.
+
+Labels are green, the Pi id and model are grey — an id is for copying, not
+reading — and `(attached)` is magenta.
+
+Colour is disabled when output is not a terminal, so `tp ls | cat` and scripts
+get clean text. Two environment variables override that:
+
+| Variable | Effect |
+| --- | --- |
+| `NO_COLOR` | Never colour, whatever else is set |
+| `TP_COLOR=always` | Colour even through a pipe, for `tp ls \| less -R` |
+| `TP_COLOR=never` | Never colour |
 
 `blocked` is the one worth acting on, and it is reported rather than guessed. Pi
 emits no event when a prompt opens, and from outside a blocked session looks
