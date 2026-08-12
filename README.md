@@ -316,6 +316,12 @@ the id is. A `SIGKILL`ed Pi leaves its last state on the pane forever, and a
 listing claiming `thinking` for a process that no longer exists would be worse
 than showing nothing.
 
+That check needs the id and pid, so a session running `command-guard` **without**
+`@caair/pi-caair-dev-tools` shows no state at all — the guard publishes
+`blocked`, but nothing published an identity to verify it against. Install both
+to see state; installing only the guard changes nothing about how tp behaves
+today.
+
 Fields are dropped from the right when the terminal is too narrow, so the state
 survives and the model is the first thing to go.
 

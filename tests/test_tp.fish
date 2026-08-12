@@ -415,6 +415,14 @@ assert_equal \
     'a narrow terminal keeps the state and drops the rest'
 set -gx COLUMNS 200
 
+# command-guard publishes `blocked` on its own, but the liveness check needs the
+# identity that pi-caair-dev-tools publishes. Without it there is no process to
+# verify against, so no state is claimed.
+tmux set-option -p -t demo_001 @pi_state blocked
+_tp_load_session_metadata
+assert_equal '' (_tp_session_suffix demo_001) 'a state with no identity behind it is not shown'
+tmux set-option -p -t demo_001 -u @pi_state
+
 for state_option in @pi_state @pi_tool @pi_state_since @pi_ctx_pct @pi_model
     tmux set-option -p -t demo_002 -u $state_option
 end
