@@ -528,14 +528,130 @@ end
 
 function _tp_load_session_metadata --description "Cache one tmux read of every session's tp and Pi metadata"
     set -l separator (_tp_metadata_separator)
+    # @tp_name is last because it is the only free-form field: `string split -m`
+    # stops splitting after the fixed fields, so a tab inside a label cannot
+    # shift the columns after it.
     set -l format (string join -- "$separator" \
-        '#{session_name}' '#{@pi_session_id}' '#{@pi_pid}' '#{session_attached}' '#{@tp_name}')
+        '#{session_name}' '#{@pi_session_id}' '#{@pi_pid}' '#{session_attached}' \
+        '#{@pi_state}' '#{@pi_tool}' '#{@pi_state_since}' '#{@pi_ctx_pct}' '#{@pi_model}' \
+        '#{@tp_name}')
 
-    # One call for the whole server: @pi_session_id and @pi_pid are pane options,
-    # and a pane option in a list-sessions format resolves against each session's
+    # One call for the whole server: the @pi_* options are pane options, and a
+    # pane option in a list-sessions format resolves against each session's
     # active pane. Pi writes them on the pane it runs in, so a tp session running
     # Pi answers here without a per-session lookup.
     set -g __tp_session_metadata (tmux list-sessions -F "$format" 2>/dev/null)
+end
+
+function _tp_metadata_fields --description "Split a metadata row into its fields"
+    string split -m 9 -- (_tp_metadata_separator) "$argv[1]"
+end
+
+function _tp_format_duration --description "Render a second count as a compact age"
+    set -l seconds $argv[1]
+
+    if not string match -qr '^\d+$' -- "$seconds"
+        return 1
+    end
+    if test "$seconds" -lt 60
+        printf '%ds\n' "$seconds"
+    else if test "$seconds" -lt 3600
+        printf '%dm\n' (math --scale=0 "$seconds / 60")
+    else if test "$seconds" -lt 86400
+        printf '%dh\n' (math --scale=0 "$seconds / 3600")
+    else
+        printf '%dd\n' (math --scale=0 "$seconds / 86400")
+    end
+end
+
+function _tp_pi_state_fields --description "Render state, tool, context and model as separate fields"
+    # Printed one per line, most important first, so a caller can drop trailing
+    # fields to fit the terminal without re-deciding what matters.
+    set -l state (string trim -- "$argv[1]")
+    set -l tool (string trim -- "$argv[2]")
+    set -l since (string trim -- "$argv[3]")
+    set -l ctx_pct (string trim -- "$argv[4]")
+    set -l model (string trim -- "$argv[5]")
+
+    if test -z "$state"
+        return 1
+    end
+
+    # A marker gives the state a shape that reads at a glance down a column,
+    # which matters most for the one state a user acts on: blocked.
+    set -l marker
+    switch $state
+        case blocked
+            set marker ⏸
+        case tool thinking
+            set marker ●
+        case idle
+            set marker ○
+        case '*'
+            set marker ·
+    end
+
+    set -l elapsed
+    if string match -qr '^\d+$' -- "$since"
+        set -l age (math --scale=0 (date +%s) - "$since")
+        if test "$age" -ge 0
+            set elapsed (_tp_format_duration "$age")
+        end
+    end
+
+    # The tool is named while one runs, and a blocked session names it too:
+    # `blocked:bash` is a guard prompt, `blocked:ask` is a question. An idle or
+    # thinking session has no tool, so a name surviving there is stale and would
+    # read as nonsense (`idle:bash`).
+    set -l headline "$marker $state"
+    if test -n "$tool"; and contains -- "$state" tool blocked
+        set headline "$headline:$tool"
+    end
+    if test -n "$elapsed"
+        set headline "$headline $elapsed"
+    end
+    printf '%s\n' "$headline"
+
+    if string match -qr '^\d+$' -- "$ctx_pct"
+        printf '%s%%\n' "$ctx_pct"
+    end
+    if test -n "$model"
+        printf '%s\n' "$model"
+    end
+end
+
+function _tp_terminal_width --description "Return the usable terminal width"
+    if set -q COLUMNS; and string match -qr '^\d+$' -- "$COLUMNS"
+        printf '%s\n' "$COLUMNS"
+        return 0
+    end
+    set -l width (tput cols 2>/dev/null)
+    if string match -qr '^\d+$' -- "$width"
+        printf '%s\n' "$width"
+        return 0
+    end
+    # No terminal to measure (a pipe, or a test harness). Assume room for
+    # everything rather than silently hiding fields.
+    printf '%s\n' 1000
+end
+
+function _tp_fit_fields --description "Join as many fields as fit the given width"
+    set -l width $argv[1]
+    set -l used $argv[2]
+    set -l fields $argv[3..]
+
+    set -l out ""
+    for field in $fields
+        # " · " is three columns; stop at the first field that would overflow so
+        # the fields stay in priority order rather than filling gaps out of turn.
+        set -l candidate "$out · $field"
+        if test (math "$used" + (string length -- "$candidate")) -gt "$width"
+            break
+        end
+        set out "$candidate"
+    end
+
+    printf '%s\n' "$out"
 end
 
 function _tp_session_metadata_row --description "Return the cached metadata row for one session"
@@ -551,6 +667,11 @@ function _tp_session_metadata_row --description "Return the cached metadata row 
 end
 
 set -g __tp_pi_id_display_length 13
+
+# Room reserved for the part of a listing line this function never sees: the
+# indent, the session number or index, and the session name. Measured against
+# the longest real form (`   12  →  pi-caair-dev-tools_012`), rounded up.
+set -g __tp_state_prefix_budget 34
 
 function _tp_live_pi_identity --description "Return the Pi session id and pid when a live Pi published them"
     set -l session_id (string trim -- "$argv[1]")
@@ -646,7 +767,7 @@ function _tp_restart_session --description "Restart a session's Pi, resuming its
         echo "No session '$session_name'" >&2
         return 1
     end
-    set -l fields (string split -m 4 -- (_tp_metadata_separator) "$row")
+    set -l fields (_tp_metadata_fields "$row")
     set -l identity (_tp_live_pi_identity "$fields[2]" "$fields[3]")
     or begin
         echo "No live Pi session in '$session_name'; nothing was changed" >&2
@@ -654,7 +775,7 @@ function _tp_restart_session --description "Restart a session's Pi, resuming its
     end
     set -l session_id "$identity[1]"
     set -l pi_pid "$identity[2]"
-    set -l label "$fields[5]"
+    set -l label "$fields[10]"
 
     set -l original (tmux show-environment -t "$session_name" TP_CMD 2>/dev/null | string replace -- 'TP_CMD=' '')
     set -l restart_command (_tp_restart_command "$original" "$session_id")
@@ -770,7 +891,7 @@ end
 function _tp_pi_session_id --description "Return the full Pi session id for a session, when one is live"
     set -l row (_tp_session_metadata_row "$argv[1]")
     or return 1
-    set -l fields (string split -m 4 -- (_tp_metadata_separator) "$row")
+    set -l fields (_tp_metadata_fields "$row")
     set -l identity (_tp_live_pi_identity "$fields[2]" "$fields[3]")
     or return 1
     printf '%s\n' "$identity[1]"
@@ -803,23 +924,39 @@ function _tp_session_suffix --description "Return the label, Pi id, and attached
         end
     end
 
-    set -l separator (_tp_metadata_separator)
-    set -l fields (string split -m 4 -- "$separator" "$row")
+    set -l fields (_tp_metadata_fields "$row")
     set -l session_id "$fields[2]"
     set -l pi_pid "$fields[3]"
     set -l attached "$fields[4]"
-    set -l label "$fields[5]"
+    set -l label "$fields[10]"
 
     set -l suffix ""
     if test -n "$label"
         set suffix "$suffix [$label]"
     end
+
+    # The state is only shown for a Pi that is live: a SIGKILLed Pi leaves its
+    # last state on the pane forever, and the pid is what tells them apart.
+    set -l pi_live 0
     set -l pi_label (_tp_pi_session_label "$session_id" "$pi_pid")
     if test $status -eq 0
+        set pi_live 1
         set suffix "$suffix $pi_label"
     end
     if test "$attached" != 0
         set suffix "$suffix (attached)"
+    end
+
+    if test "$pi_live" -eq 1
+        set -l state_fields (_tp_pi_state_fields \
+            "$fields[5]" "$fields[6]" "$fields[7]" "$fields[8]" "$fields[9]")
+        if test $status -eq 0; and test (count $state_fields) -gt 0
+            # The caller's own prefix (indent, number, session name) is not known
+            # here, so budget for it rather than overflowing the line.
+            set -l width (_tp_terminal_width)
+            set -l reserved (math (string length -- "$suffix") + $__tp_state_prefix_budget)
+            set suffix "$suffix"(_tp_fit_fields "$width" "$reserved" $state_fields)
+        end
     end
 
     printf '%s\n' "$suffix"

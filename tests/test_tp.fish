@@ -331,6 +331,103 @@ set -g __tp_session_metadata
 assert_equal '' (_tp_session_suffix demo_001) 'an uncached session still yields an empty suffix'
 _tp_load_session_metadata
 
+# ── Session state ───────────────────────────────────────────────────────────
+#
+# Pi publishes what it is doing alongside its identity, so a listing can show a
+# session waiting on a prompt without anyone attaching to it.
+
+assert_equal '3m' (_tp_format_duration 187) 'a duration under an hour reads in minutes'
+assert_equal '45s' (_tp_format_duration 45) 'a duration under a minute reads in seconds'
+assert_equal '2h' (_tp_format_duration 7500) 'a duration under a day reads in hours'
+assert_equal '3d' (_tp_format_duration 259200) 'a long duration reads in days'
+_tp_format_duration 'not-a-number' >/dev/null 2>&1
+assert_equal 1 "$status" 'a non-numeric duration is rejected'
+
+# The fields are returned one per line, most important first, so a caller can
+# drop trailing ones to fit the terminal without re-deciding what matters.
+set -l state_fields (_tp_pi_state_fields blocked bash (math (date +%s) - 187) 24 gpt-5.6-sol)
+assert_equal 3 (count $state_fields) 'state, context and model are separate fields'
+assert_equal '⏸ blocked:bash 3m' "$state_fields[1]" 'a blocked session names the tool holding it'
+assert_equal '24%' "$state_fields[2]" 'context usage is rendered as a percentage'
+assert_equal 'gpt-5.6-sol' "$state_fields[3]" 'the model is rendered last'
+
+# A tool name outliving the tool would read as nonsense ("idle:bash").
+set -l idle_fields (_tp_pi_state_fields idle bash (date +%s) '' '')
+assert_equal '○ idle 0s' "$idle_fields[1]" 'an idle session does not name a stale tool'
+set -l thinking_fields (_tp_pi_state_fields thinking bash (date +%s) '' '')
+assert_equal '● thinking 0s' "$thinking_fields[1]" 'a thinking session does not name a stale tool'
+
+_tp_pi_state_fields '' '' '' '' '' >/dev/null 2>&1
+assert_equal 1 "$status" 'a session publishing no state renders nothing'
+
+# A Pi too old to publish state still lists; only the state is missing.
+set -l partial (_tp_pi_state_fields idle '' '' '' '')
+assert_equal 1 (count $partial) 'a state with no extras is still rendered'
+assert_equal '○ idle' "$partial[1]" 'a state with no timestamp omits the age'
+
+# Fields are dropped from the end, so the state survives a narrow terminal.
+assert_equal \
+    ' · one · two' \
+    (_tp_fit_fields 40 0 one two) \
+    'every field is shown when there is room'
+assert_equal \
+    ' · one · two' \
+    (_tp_fit_fields 12 0 one two) \
+    'a field that exactly fills the line is kept'
+assert_equal \
+    ' · one' \
+    (_tp_fit_fields 11 0 one two) \
+    'a field one column too wide is dropped'
+assert_equal \
+    '' \
+    (_tp_fit_fields 10 9 one two) \
+    'no field is shown when the prefix already fills the line'
+
+# End to end through the listing, against a live pid.
+tmux set-option -p -t demo_002 @pi_state blocked
+tmux set-option -p -t demo_002 @pi_tool ask
+tmux set-option -p -t demo_002 @pi_state_since (math (date +%s) - 90)
+tmux set-option -p -t demo_002 @pi_ctx_pct 24
+tmux set-option -p -t demo_002 @pi_model gpt-5.6-sol
+set -gx COLUMNS 200
+_tp_load_session_metadata
+assert_equal \
+    ' [labelled work] pi:019ff650-ac6d · ⏸ blocked:ask 1m · 24% · gpt-5.6-sol' \
+    (_tp_session_suffix demo_002) \
+    'a listing shows the label, id and full state together'
+
+# A SIGKILLed Pi leaves its last state on the pane forever, so a state is only
+# trustworthy while the process that published it is alive.
+tmux set-option -p -t demo_002 @pi_pid 999999
+_tp_load_session_metadata
+assert_equal \
+    ' [labelled work]' \
+    (_tp_session_suffix demo_002) \
+    'a dead Pi shows neither its id nor its last state'
+tmux set-option -p -t demo_002 @pi_pid $fish_pid
+
+# A narrow terminal keeps the state and drops what follows it.
+set -gx COLUMNS 90
+_tp_load_session_metadata
+assert_equal \
+    ' [labelled work] pi:019ff650-ac6d · ⏸ blocked:ask 1m' \
+    (_tp_session_suffix demo_002) \
+    'a narrow terminal keeps the state and drops the rest'
+set -gx COLUMNS 200
+
+# command-guard publishes `blocked` on its own, but the liveness check needs the
+# identity that pi-caair-dev-tools publishes. Without it there is no process to
+# verify against, so no state is claimed.
+tmux set-option -p -t demo_001 @pi_state blocked
+_tp_load_session_metadata
+assert_equal '' (_tp_session_suffix demo_001) 'a state with no identity behind it is not shown'
+tmux set-option -p -t demo_001 -u @pi_state
+
+for state_option in @pi_state @pi_tool @pi_state_since @pi_ctx_pct @pi_model
+    tmux set-option -p -t demo_002 -u $state_option
+end
+_tp_load_session_metadata
+
 # The displayed id must reach past the UUIDv7 timestamp into the random block.
 # Eight characters is only a 65-second window, which sessions started together
 # in that window share. `tp sid` remains the source of the exact full id.
