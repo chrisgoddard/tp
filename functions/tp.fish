@@ -710,7 +710,7 @@ function _tp_prepare_ssh_source_for_attach --description "Update or preserve the
     # run-shell expands client_created and client_tty in the hook's client
     # context. The source itself is read as a quoted shell variable so the
     # existing token validation cannot become shell syntax.
-    set -l hook_script "source=\$(tmux show-option -gqv \"$pending_source\"); expected_tty=\$(tmux show-option -gqv \"$pending_tty\"); owner=\$(tmux show-option -gqv \"$pending_owner\"); actual_tty=#{client_tty}; created=#{client_created}; if kill -0 \"\$owner\" 2>/dev/null && test \"\$actual_tty\" = \"\$expected_tty\"; then case \"\$created\" in \"\"|*[!0-9]*) ;; *) if test \"\${#created}\" -le 15; then tmux set-option -gq \"$option_name\" \"v1 ip=\$source created=\$created\"; fi ;; esac; fi; $cleanup_command"
+    set -l hook_script "source=\$(tmux show-option -gqv \"$pending_source\"); expected_tty=\$(tmux show-option -gqv \"$pending_tty\"); owner=\$(tmux show-option -gqv \"$pending_owner\"); actual_tty=#{client_tty}; created=#{client_created}; if test -n \"\$source\" && kill -0 \"\$owner\" 2>/dev/null && test \"\$actual_tty\" = \"\$expected_tty\"; then case \"\$created\" in \"\"|*[!0-9]*) ;; *) if test \"\${#created}\" -le 15; then tmux set-option -gq \"$option_name\" \"v1 ip=\$source created=\$created\"; fi ;; esac; fi; $cleanup_command"
     set -l hook_command "run-shell "(string escape -- "$hook_script")
     tmux set-hook -g "client-attached[$hook_index]" "$hook_command"
     if test $status -ne 0
