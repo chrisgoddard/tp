@@ -83,7 +83,7 @@ tp pi --update-first          Update Pi and its extensions before running Pi
 tp pi --model sonnet:high     Pass all other arguments directly to Pi
 tp 2                          Attach to session 002, creating it if needed
 tp last                       Attach to the highest-numbered project session
-tp ls                         List sessions for the current project
+tp ls                         List sessions for the current project, with any Pi session id
 tp name 2 api                 Set or replace the label on session 002
 tp kill 2                     Kill project session 002
 tp kill                       Kill every session for the current project
@@ -254,6 +254,29 @@ The detached uploader survives the shortcut's shell process exiting. It uses non
 3. Enable **Socket Control Mode → Automation**.
 
 `jq` is used to identify an already-open workspace. Without it, `tp` cannot reliably detect and focus existing tp workspaces.
+
+### Pi session ids in listings
+
+`tp ls`, `tp global`, and `tp all` show the Pi session running in each tmux session, abbreviated to its first eight characters:
+
+```text
+Sessions for 'pi-delegate':
+  014  →  pi-delegate_014 [fix-232] pi:019ff3d2 (attached)
+  015  →  pi-delegate_015 [issue-119] pi:019ff185
+```
+
+The id comes from two tmux pane options that Pi writes on the pane it runs in:
+
+```text
+@pi_session_id = <full Pi session id>
+@pi_pid        = <Pi's process id>
+```
+
+Publishing them is the Pi side's job — the `@caair/pi-caair-dev-tools` package does it on session start and unsets them on shutdown. A session running anything else simply has no id to show.
+
+`tp` reads both in the single `tmux list-sessions` call it already uses for labels and attachment, because a pane option resolves in a `list-sessions` format against each session's active pane.
+
+Pi cannot unset the options when it is killed outright, so `tp` treats the published pid as the liveness check: an id whose process is gone is not shown. The check is `ps -p`, not `kill -0`, because `kill -0` fails on a live process owned by another user. An id published without a pid is shown as-is, since nothing disproves it.
 
 ### SSH origin metadata
 
