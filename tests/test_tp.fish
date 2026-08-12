@@ -579,6 +579,49 @@ assert_equal \
     "$fake_session_dir/2026-01-01T00-00-00-000Z_$SID.jsonl" \
     (_tp_pi_session_log /tmp/demo $SID) \
     'an existing log file is found for the published id'
+
+# Prompt templates and other Pi APIs can move a live conversation into a
+# first-level custom session directory. Pi's own --session ID lookup searches
+# those directories too, so tp must not reject the restart as unsaved.
+set -l FORK_SID 019ff6ca-d2be-7455-a16b-3847839264fc
+set -l fork_session_dir "$fake_session_root/.pi/agent/sessions/forks"
+set -l fork_session_log "$fork_session_dir/2026-01-02T00-00-00-000Z_$FORK_SID.jsonl"
+mkdir -p "$fork_session_dir"
+touch "$fork_session_log"
+assert_equal \
+    "$fork_session_log" \
+    (_tp_pi_session_log /tmp/demo $FORK_SID) \
+    'a saved conversation in a custom first-level session directory is resumable'
+
+# Pi offers an ID found outside the working-directory session folder as a fork.
+# Restart with the exact saved path so a custom-directory conversation reopens
+# in place without that prompt.
+_tp_create restartable 1 sleep 60; or fail 'could not create restartable_001'
+tmux set-option -p -t restartable_001 @pi_session_id $FORK_SID
+tmux set-option -p -t restartable_001 @pi_pid $fish_pid
+functions -c _tp_stop_pi __tp_real_stop_pi
+functions -c _tp_create __tp_real_create_for_restart
+function _tp_stop_pi
+    set -g __tp_stopped_pid $argv[1]
+    return 0
+end
+function _tp_create
+    set -g __tp_restart_create_arguments $argv
+    return 0
+end
+
+_tp_restart_session restartable_001 >/dev/null; or fail 'custom-directory restart failed'
+assert_equal \
+    "restartable|001|sleep|60|--session|$fork_session_log" \
+    (string join -- '|' $__tp_restart_create_arguments) \
+    'restart reopens the exact saved conversation instead of invoking global ID lookup'
+assert_equal "$fish_pid" "$__tp_stopped_pid" 'restart stops the Pi process that published the session id'
+
+functions --erase _tp_stop_pi _tp_create
+functions -c __tp_real_stop_pi _tp_stop_pi
+functions -c __tp_real_create_for_restart _tp_create
+functions --erase __tp_real_stop_pi __tp_real_create_for_restart
+set -e __tp_stopped_pid __tp_restart_create_arguments
 set -gx HOME "$original_home"
 
 # --restart refuses a session with no live Pi rather than acting on it.
