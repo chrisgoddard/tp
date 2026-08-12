@@ -742,6 +742,14 @@ assert_equal \
 # Pi offers an ID found outside the working-directory session folder as a fork.
 # Restart with the exact saved path so a custom-directory conversation reopens
 # in place without that prompt.
+#
+# This is the only test that gives _tp_create a command, so it is the only one
+# that runs the session wrapper. That wrapper is Fish syntax, and tmux runs it
+# with `default-shell`, which is the account's login shell: Fish on a developer
+# machine, /bin/sh on a clean CI runner, where the pane exits immediately and
+# the session is gone before the next command sees it. Pin the shell for this
+# fixture so the test states what it needs rather than inheriting it.
+tmux set-option -g default-shell (command -v fish)
 _tp_create restartable 1 sleep 60; or fail 'could not create restartable_001'
 tmux set-option -p -t restartable_001 @pi_session_id $FORK_SID
 tmux set-option -p -t restartable_001 @pi_pid $fish_pid
