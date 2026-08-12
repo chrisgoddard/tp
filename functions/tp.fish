@@ -749,7 +749,9 @@ end
 function _tp_visible_length --description "Length of a string ignoring colour escapes"
     # `string length` counts the bytes of an escape sequence, which would make a
     # coloured field look far wider than it prints and drop fields that fit.
-    string length -- (string replace -ra '\e\[[0-9;]*m' '' -- "$argv[1]")
+    # Fish's `set_color normal` also emits a character-set reset (ESC ( B) on
+    # some terminals, so strip that too or a coloured field measures 3 wide.
+    string length -- (string replace -ra '\e\[[0-9;]*m|\e\(.' '' -- "$argv[1]")
 end
 
 function _tp_live_pi_identity --description "Return the Pi session id and pid when a live Pi published them"
