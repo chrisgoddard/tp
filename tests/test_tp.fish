@@ -277,6 +277,64 @@ assert_equal 'demo_001 demo_002 demo_010' (string join ' ' $sessions) 'project l
 set -l global_sessions (_tp_list_global)
 assert_equal 'demo_001 demo_002 demo_010 other_001' (string join ' ' $global_sessions) 'global listing is grouped and sorted'
 
+# Pi publishes @pi_session_id and @pi_pid as pane options on the pane it runs in.
+# Listings read them from one list-sessions call, so these checks set them the
+# same way Pi does.
+_tp_set_session_name demo_002 'labelled work'
+tmux set-option -p -t demo_002 @pi_session_id 019ff650-ac6d-7641-bb90-4475b973cc82
+tmux set-option -p -t demo_002 @pi_pid $fish_pid
+tmux set-option -p -t demo_010 @pi_session_id aaaaaaaa-dead-beef-0000-000000000000
+tmux set-option -p -t demo_010 @pi_pid 2147483646
+
+_tp_load_session_metadata
+assert_equal \
+    ' pi:019ff650' \
+    (_tp_session_suffix demo_002 | string replace -- ' [labelled work]' '') \
+    'a live Pi session contributes its abbreviated id'
+assert_equal '' (_tp_session_suffix demo_001) 'a session running no Pi contributes no id'
+assert_equal '' (_tp_session_suffix demo_010) 'an id left behind by a dead Pi process is suppressed'
+
+# Liveness must not depend on owning the process. `kill -0` fails with EPERM for
+# another user's live process, so a root-owned pid stands in for that case.
+tmux set-option -p -t demo_010 @pi_pid 1
+_tp_load_session_metadata
+assert_equal ' pi:aaaaaaaa' (_tp_session_suffix demo_010) 'a live process owned by another user still counts as live'
+
+# An older Pi publishes an id with no pid. The id is still shown: without a pid
+# there is nothing to disprove, and hiding it would lose real information.
+tmux set-option -p -t demo_010 -u @pi_pid
+_tp_load_session_metadata
+assert_equal ' pi:aaaaaaaa' (_tp_session_suffix demo_010) 'an id published without a pid is still shown'
+tmux set-option -p -t demo_010 -u @pi_session_id
+
+set -l ls_output (tp ls)
+if not contains -- '  002  →  demo_002 [labelled work] pi:019ff650' $ls_output
+    fail 'tp ls does not show the label and Pi session id together'
+end
+printf 'ok - tp ls shows the label and Pi session id together\n'
+
+set -l global_output (tp global)
+if not contains -- '   2  →  demo_002 [labelled work] pi:019ff650' $global_output
+    fail 'tp global does not show the Pi session id'
+end
+printf 'ok - tp global shows the Pi session id\n'
+
+set -l all_output (tp all)
+if not contains -- '  demo_002 [labelled work] pi:019ff650' $all_output
+    fail 'tp all does not show the Pi session id'
+end
+printf 'ok - tp all shows the Pi session id\n'
+
+# A session name absent from the cache must not delete the caller's line: in
+# Fish, a command substitution that prints nothing expands to zero elements.
+set -g __tp_session_metadata
+assert_equal '' (_tp_session_suffix demo_001) 'an uncached session still yields an empty suffix'
+_tp_load_session_metadata
+
+_tp_set_session_name demo_002 ''
+tmux set-option -p -t demo_002 -u @pi_session_id
+tmux set-option -p -t demo_002 -u @pi_pid
+
 # Exercise the public Pi command without creating or attaching to a real pane.
 functions -c _tp_create __tp_real_create
 functions -c _tp_set_session_name __tp_real_set_session_name

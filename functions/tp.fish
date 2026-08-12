@@ -43,18 +43,10 @@ function tp --description "Manage tmux sessions for the current project director
                 return 1
             end
             echo "Sessions for '$project':"
+            _tp_load_session_metadata
             for s in $existing
                 set -l num (string replace -- "$project"_ "" $s)
-                set -l label ""
-                set -l raw_name (tmux show-option -t "$s" -v @tp_name 2>/dev/null)
-                if test -n "$raw_name"
-                    set label " [$raw_name]"
-                end
-                set -l attached ""
-                if tmux list-clients -t "$s" 2>/dev/null | string length -q
-                    set attached " (attached)"
-                end
-                echo "  $num  →  $s$label$attached"
+                echo "  $num  →  $s"(_tp_session_suffix $s)
             end
 
         case kill k
@@ -118,18 +110,10 @@ function tp --description "Manage tmux sessions for the current project director
                 return
             end
             echo "All tp sessions:"
+            _tp_load_session_metadata
             set -l i 1
             for s in $sessions
-                set -l label ""
-                set -l raw_name (tmux show-option -t "$s" -v @tp_name 2>/dev/null)
-                if test -n "$raw_name"
-                    set label " [$raw_name]"
-                end
-                set -l attached ""
-                if tmux list-clients -t "$s" 2>/dev/null | string length -q
-                    set attached " (attached)"
-                end
-                printf '  %2d  →  %s%s%s\n' $i $s $label $attached
+                printf '  %2d  →  %s%s\n' $i $s (_tp_session_suffix $s)
                 set i (math $i + 1)
             end
             echo ""
@@ -141,17 +125,9 @@ function tp --description "Manage tmux sessions for the current project director
                 echo "No tmux sessions"
                 return 1
             end
+            _tp_load_session_metadata
             for s in $sessions
-                set -l label ""
-                set -l raw_name (tmux show-option -t "$s" -v @tp_name 2>/dev/null)
-                if test -n "$raw_name"
-                    set label " [$raw_name]"
-                end
-                set -l attached ""
-                if tmux list-clients -t "$s" 2>/dev/null | string length -q
-                    set attached " (attached)"
-                end
-                echo "  $s$label$attached"
+                echo "  $s"(_tp_session_suffix $s)
             end
 
         case name
@@ -489,6 +465,96 @@ function _tp_cmux_workspace_ref --description "Find the cmux workspace for a tmu
     end
 
     printf '%s\n' "$ref"
+end
+
+function _tp_metadata_separator --description "Return the field separator used by tmux listing formats"
+    # A tab cannot appear in a session name and is never produced by the numeric
+    # fields, so only the trailing label can contain one. Splitting with a field
+    # limit keeps such a label intact.
+    printf '\t'
+end
+
+function _tp_load_session_metadata --description "Cache one tmux read of every session's tp and Pi metadata"
+    set -l separator (_tp_metadata_separator)
+    set -l format (string join -- "$separator" \
+        '#{session_name}' '#{@pi_session_id}' '#{@pi_pid}' '#{session_attached}' '#{@tp_name}')
+
+    # One call for the whole server: @pi_session_id and @pi_pid are pane options,
+    # and a pane option in a list-sessions format resolves against each session's
+    # active pane. Pi writes them on the pane it runs in, so a tp session running
+    # Pi answers here without a per-session lookup.
+    set -g __tp_session_metadata (tmux list-sessions -F "$format" 2>/dev/null)
+end
+
+function _tp_session_metadata_row --description "Return the cached metadata row for one session"
+    set -l name $argv[1]
+    set -l separator (_tp_metadata_separator)
+    for row in $__tp_session_metadata
+        if test (string split -m 1 -- "$separator" "$row")[1] = "$name"
+            printf '%s\n' "$row"
+            return 0
+        end
+    end
+    return 1
+end
+
+function _tp_pi_session_label --description "Return the abbreviated Pi session id when one is live"
+    set -l session_id (string trim -- "$argv[1]")
+    set -l pi_pid (string trim -- "$argv[2]")
+
+    if test -z "$session_id"
+        return 1
+    end
+
+    # Pi clears both options on shutdown, but a SIGKILLed Pi never gets to. The
+    # published pid is the check that separates a live session from that residue.
+    #
+    # `ps -p`, not `kill -0`: `kill -0` fails with EPERM for a live process owned
+    # by another user, which would read as dead and hide a perfectly good id.
+    if string match -qr '^\d+$' -- "$pi_pid"
+        if not ps -p "$pi_pid" >/dev/null 2>&1
+            return 1
+        end
+    end
+
+    printf 'pi:%s\n' (string sub -l 8 -- "$session_id")
+end
+
+function _tp_session_suffix --description "Return the label, Pi id, and attached markers for a session"
+    # Always print a line, even an empty one: a command substitution producing no
+    # output expands to zero elements, which would delete the caller's whole
+    # `echo`/`printf` argument rather than append nothing to it.
+    set -l name $argv[1]
+    set -l row (_tp_session_metadata_row "$name")
+    or begin
+        _tp_load_session_metadata
+        set row (_tp_session_metadata_row "$name")
+        or begin
+            echo ""
+            return 0
+        end
+    end
+
+    set -l separator (_tp_metadata_separator)
+    set -l fields (string split -m 4 -- "$separator" "$row")
+    set -l session_id "$fields[2]"
+    set -l pi_pid "$fields[3]"
+    set -l attached "$fields[4]"
+    set -l label "$fields[5]"
+
+    set -l suffix ""
+    if test -n "$label"
+        set suffix "$suffix [$label]"
+    end
+    set -l pi_label (_tp_pi_session_label "$session_id" "$pi_pid")
+    if test $status -eq 0
+        set suffix "$suffix $pi_label"
+    end
+    if test "$attached" != 0
+        set suffix "$suffix (attached)"
+    end
+
+    printf '%s\n' "$suffix"
 end
 
 function _tp_list_sessions --description "List tmux sessions matching a project name"
