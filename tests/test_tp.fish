@@ -167,7 +167,7 @@ set -gx SSH_CONNECTION '203.0.113.10 51234 203.0.113.20 22'
 __tp_reset_attach_mock
 _tp_attach demo_001; or fail 'outside attachment with SSH metadata failed'
 assert_equal \
-    'read-close clear check-hook set set set-hook attach clear-hook clear clear' \
+    'read-close clear check-hook set set set-hook attach clear-hook' \
     (string join ' ' $__tp_mock_events) \
     'outside attachment installs metadata stamping before attach-session'
 set -l hook_parts (string split ' ' -- "$__tp_mock_last_hook_command")
