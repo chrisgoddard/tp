@@ -634,12 +634,16 @@ function _tp_ssh_source_option --description "Return the tmux option for a clien
     printf '@tp_ssh_source_%s\n' "$sanitized"
 end
 
-function _tp_cleanup_ssh_source_hook --description "Clear an outside-attach SSH source hook"
-    if test (count $argv) -ne 1; or not string match -qr '^[0-9]+$' -- "$argv[1]"
+function _tp_cleanup_ssh_source_hook --description "Clear an outside-attach SSH source hook and pending values"
+    if test (count $argv) -ne 2; or not string match -qr '^[0-9]+$' -- "$argv[1]"; or not string match -qr '^[0-9]+_[0-9]+$' -- "$argv[2]"
         return 0
     end
 
-    tmux set-hook -gu "client-attached[$argv[1]]" >/dev/null 2>&1
+    set -l hook_index $argv[1]
+    set -l pending_id $argv[2]
+    tmux set-hook -gu "client-attached[$hook_index]" >/dev/null 2>&1
+    tmux set-option -guq "@tp_ssh_source_pending_$pending_id" >/dev/null 2>&1
+    tmux set-option -guq "@tp_ssh_tty_pending_$pending_id" >/dev/null 2>&1
 end
 
 function _tp_prepare_ssh_source_for_attach --description "Update or preserve the current client's SSH source"
@@ -693,7 +697,7 @@ function _tp_prepare_ssh_source_for_attach --description "Update or preserve the
     or return 0
     tmux set-option -gq "$pending_tty" "$client_tty"
     if test $status -ne 0
-        _tp_cleanup_ssh_source_hook "$hook_index"
+        _tp_cleanup_ssh_source_hook "$hook_index" "$pending_id"
         return 0
     end
 
@@ -740,7 +744,7 @@ function _tp_attach --description "Attach or switch to a tmux session"
         end
     else
         tmux attach-session -t "=$session_name"
-        _tp_cleanup_ssh_source_hook $ssh_source_hook[1]
+        _tp_cleanup_ssh_source_hook $ssh_source_hook[1] $ssh_source_hook[2]
 
         # A tmux client uses the alternate screen, so its final pane would normally
         # disappear when the session exits. Replay the snapshot after returning to
