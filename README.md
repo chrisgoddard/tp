@@ -281,6 +281,44 @@ Publishing them is the Pi side's job — the `@caair/pi-caair-dev-tools` package
 
 Pi cannot unset the options when it is killed outright, so `tp` treats the published pid as the liveness check: an id whose process is gone is not shown. The check is `ps -p`, not `kill -0`, because `kill -0` fails on a live process owned by another user. An id published without a pid is shown as-is, since nothing disproves it.
 
+### Session state
+
+Alongside the id, a listing shows what each Pi session is doing:
+
+```text
+  001  →  demo_001 [issue filer] pi:019ff650-ac6d · ⏸ blocked:bash 3m · 24% · gpt-5.6-sol
+  002  →  demo_002 [api work]    pi:019ff3d2-4dea · ● tool:read 4s · 61% · gpt-5.6-sol
+  003  →  demo_003              pi:019ff69e-6014 · ○ idle 2h · 8% · claude-opus-4-8
+```
+
+| Marker | State | Meaning |
+| --- | --- | --- |
+| `⏸` | `blocked` | Waiting for you — a guard prompt or a question |
+| `●` | `tool` | Running the named tool |
+| `●` | `thinking` | Working, between tools |
+| `○` | `idle` | Waiting for your next message |
+
+Then time in that state, context window used, and the model.
+
+`blocked` is the one worth acting on, and it is reported rather than guessed. Pi
+emits no event when a prompt opens, and from outside a blocked session looks
+exactly like a busy one — both are a tool that started and has not ended. So a
+40-second compile cannot be told from a 40-second wait by timing alone. Instead
+the `ask` tool is known to block by definition, and `command-guard` marks its own
+prompts while they are open. Everything else is reported as the tool it is.
+
+State comes from more tmux pane options that Pi publishes, read in the same
+single call: `@pi_state`, `@pi_tool`, `@pi_state_since`, `@pi_ctx_pct`, and
+`@pi_model`. Publishing them is `@caair/pi-caair-dev-tools`' job.
+
+A state is only shown while the publishing process is alive, checked exactly as
+the id is. A `SIGKILL`ed Pi leaves its last state on the pane forever, and a
+listing claiming `thinking` for a process that no longer exists would be worse
+than showing nothing.
+
+Fields are dropped from the right when the terminal is too narrow, so the state
+survives and the model is the first thing to go.
+
 The listing truncates to 13 characters. Pi session ids are UUIDv7, whose leading hex digits are a millisecond timestamp rather than randomness — 8 characters is only a 65-second window, so sessions started together in that window share it. Thirteen characters reaches past the timestamp into the random block.
 
 For the exact, untruncated id, use `tp sid`:
