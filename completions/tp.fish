@@ -20,6 +20,15 @@ function __tp_complete_project_sessions
     end
 end
 
+# True when the command line already names a bare session number, which is the
+# only form that takes --restart directly.
+function __tp_seen_session_number
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 2
+    or return 1
+    string match -qr '^\d+$' -- "$tokens[2]"
+end
+
 # Match the ordering used by `tp global`, then expose its one-based indexes.
 function __tp_complete_global_session_indexes
     set -l sessions
@@ -49,6 +58,7 @@ complete -c tp -n '__fish_use_subcommand' -a list -d 'List sessions for the curr
 complete -c tp -n '__fish_use_subcommand' -a last -d 'Attach to the last-created project session'
 complete -c tp -n '__fish_use_subcommand' -a kill -d 'Kill one or all project sessions'
 complete -c tp -n '__fish_use_subcommand' -a name -d 'Set a session label'
+complete -c tp -n '__fish_use_subcommand' -a sid -d 'Print the full Pi session id running in a session'
 complete -c tp -n '__fish_use_subcommand' -a shot -d 'Find screenshots uploaded by tp-shot'
 complete -c tp -n '__fish_use_subcommand' -a global -d 'List or attach to tp sessions across projects'
 complete -c tp -n '__fish_use_subcommand' -a cmux -d 'Open or focus tp sessions in cmux'
@@ -63,9 +73,12 @@ complete -c tp -n '__fish_use_subcommand' -a g -d 'List or attach to tp sessions
 complete -c tp -n '__fish_use_subcommand' -a c -d 'Open or focus tp sessions in cmux'
 complete -c tp -n '__fish_use_subcommand' -a a -d 'List all tmux sessions'
 
-# Existing project session numbers can be used directly or with kill/name.
+# Existing project session numbers can be used directly or with kill/name/sid.
 complete -c tp -n '__fish_use_subcommand' -a '(__tp_complete_project_sessions)'
-complete -c tp -n '__fish_seen_subcommand_from kill k name' -a '(__tp_complete_project_sessions)'
+complete -c tp -n '__fish_seen_subcommand_from kill k name sid' -a '(__tp_complete_project_sessions)'
+
+# A bare session number takes --restart; so does a global index.
+complete -c tp -n '__tp_seen_session_number' -l restart -d "Restart the session's Pi, resuming its recorded session"
 
 # Options and nested-command completion for `tp new` and `tp n`.
 complete -c tp -n '__fish_seen_subcommand_from new n' -s n -l name -r -d 'Label the new session'
@@ -83,5 +96,6 @@ complete -c tp -n '__fish_seen_subcommand_from shot; and not __fish_seen_subcomm
 
 # Global and cmux selectors are one-based indexes into the displayed global list.
 complete -c tp -n '__fish_seen_subcommand_from global g' -a '(__tp_complete_global_session_indexes)'
+complete -c tp -n '__fish_seen_subcommand_from global g' -l restart -d "Restart the session's Pi, resuming its recorded session"
 complete -c tp -n '__fish_seen_subcommand_from cmux c' -a '(__tp_complete_global_session_indexes)'
 complete -c tp -n '__fish_seen_subcommand_from cmux c' -a all -d 'Open or focus every tp session in cmux'

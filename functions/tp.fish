@@ -97,14 +97,24 @@ function tp --description "Manage tmux sessions for the current project director
             end
             # tp g <index> → attach to that global session
             if set -q argv[2]
-                set -l idx $argv[2]
-                if not string match -qr '^\d+$' $idx
-                    echo "Usage: tp global [<index>]"
+                set -l rest $argv[2..]
+                set -l restart 0
+                if set -l restart_index (contains --index -- --restart $rest)
+                    set restart 1
+                    set -e rest[$restart_index]
+                end
+                set -l idx $rest[1]
+                if test (count $rest) -ne 1; or not string match -qr '^\d+$' -- "$idx"
+                    echo "Usage: tp global [<index>] [--restart]"
                     return 1
                 end
                 if test $idx -lt 1 -o $idx -gt (count $sessions)
                     echo "Index out of range (1-"(count $sessions)")"
                     return 1
+                end
+                if test "$restart" -eq 1
+                    _tp_restart_session $sessions[$idx]
+                    or return 1
                 end
                 _tp_attach $sessions[$idx]
                 return
@@ -130,6 +140,28 @@ function tp --description "Manage tmux sessions for the current project director
                 echo "  $s"(_tp_session_suffix $s)
             end
 
+        case sid
+            if test (count $argv) -ne 2
+                echo "Usage: tp sid <n>" >&2
+                return 2
+            end
+            set -l target "$project"_(_tp_format_number "$argv[2]")
+            or begin
+                echo "Usage: tp sid <n>" >&2
+                return 2
+            end
+            if not tmux has-session -t "=$target" 2>/dev/null
+                echo "No session '$target'" >&2
+                return 1
+            end
+            _tp_load_session_metadata
+            set -l session_id (_tp_pi_session_id "$target")
+            or begin
+                echo "No live Pi session in '$target'" >&2
+                return 1
+            end
+            printf '%s\n' "$session_id"
+
         case name
             if test (count $argv) -lt 3
                 echo "Usage: tp name <n> <label>"
@@ -149,21 +181,40 @@ function tp --description "Manage tmux sessions for the current project director
             if string match -qr '^\d+$' $cmd
                 set -l id (_tp_format_number "$cmd")
                 set -l target "$project"_$id
+                set -l rest $argv[2..]
+                set -l restart 0
+                if set -l restart_index (contains --index -- --restart $rest)
+                    set restart 1
+                    set -e rest[$restart_index]
+                end
+                if test (count $rest) -gt 0
+                    echo "Usage: tp <n> [--restart]" >&2
+                    return 2
+                end
                 if tmux has-session -t "=$target" 2>/dev/null
+                    if test "$restart" -eq 1
+                        _tp_restart_session "$target"
+                        or return 1
+                    end
                     _tp_attach $target
+                else if test "$restart" -eq 1
+                    echo "No session '$target' to restart" >&2
+                    return 1
                 else
                     echo "Session '$target' doesn't exist. Creating it..."
                     _tp_create $project $id
                     _tp_attach $target
                 end
             else
-                echo "Usage: tp [new [-n name] [cmd...]|pi [-n name] [-uf] [pi-args...]|ls|last|kill [n]|name <n> <label>|shot [latest|list [n]|dir]|global [i]|cmux [i|prefix|all]|all|<number>]"
+                echo "Usage: tp [new [-n name] [cmd...]|pi [-n name] [-uf] [pi-args...]|ls|last|kill [n]|name <n> <label>|sid <n>|shot [latest|list [n]|dir]|global [i]|cmux [i|prefix|all]|all|<number> [--restart]]"
                 echo ""
                 echo "  tp                       Attach to first session (or create _1)"
                 echo "  tp new [-n name] [cmd..] Create next numbered session"
                 echo "  tp pi [-n name] [-uf]    Create the next session running Pi (alias: p)"
                 echo "  tp name <n> <label>      Set/update a session's name"
+                echo "  tp sid <n>               Print the full Pi session id running in session _n"
                 echo "  tp <n>                   Attach to session _n (creates if missing)"
+                echo "  tp <n> --restart         Restart session _n's Pi, resuming its session"
                 echo "  tp last                  Attach to last-created session here (alias: l, -)"
                 echo "  tp ls                    List sessions for current project"
                 echo "  tp kill                  Kill all project sessions"
@@ -173,6 +224,7 @@ function tp --description "Manage tmux sessions for the current project director
                 echo "  tp shot dir              Print the screenshot upload directory"
                 echo "  tp global                List all tp sessions everywhere (alias: g)"
                 echo "  tp global <i>            Attach to global tp session by index"
+                echo "  tp global <i> --restart  Restart that session's Pi, resuming its session"
                 echo "  tp cmux                  List global sessions and cmux state (alias: c)"
                 echo "  tp cmux <i>              Open/focus global session <i> in cmux"
                 echo "  tp cmux <prefix>         Open/focus sessions whose names start with prefix"
@@ -498,7 +550,9 @@ function _tp_session_metadata_row --description "Return the cached metadata row 
     return 1
 end
 
-function _tp_pi_session_label --description "Return the abbreviated Pi session id when one is live"
+set -g __tp_pi_id_display_length 13
+
+function _tp_live_pi_identity --description "Return the Pi session id and pid when a live Pi published them"
     set -l session_id (string trim -- "$argv[1]")
     set -l pi_pid (string trim -- "$argv[2]")
 
@@ -515,9 +569,223 @@ function _tp_pi_session_label --description "Return the abbreviated Pi session i
         if not ps -p "$pi_pid" >/dev/null 2>&1
             return 1
         end
+        printf '%s\n%s\n' "$session_id" "$pi_pid"
+        return 0
     end
 
-    printf 'pi:%s\n' (string sub -l 8 -- "$session_id")
+    # An older Pi published an id with no pid. Nothing disproves the id, so it is
+    # still reported; the empty pid tells a caller there is no process to signal.
+    printf '%s\n\n' "$session_id"
+end
+
+function _tp_pi_session_dir --description "Return Pi's session directory for a working directory"
+    set -l working_directory (path resolve -- "$argv[1]")
+    set -l agent_dir "$HOME/.pi/agent"
+    if set -q PI_CODING_AGENT_DIR; and test -n "$PI_CODING_AGENT_DIR"
+        set agent_dir (path resolve -- "$PI_CODING_AGENT_DIR")
+    end
+
+    # Mirrors Pi's own getDefaultSessionDirPath: strip the leading separator,
+    # then replace every remaining separator with a dash, wrapped in `--`.
+    set -l safe (string replace -r '^/' '' -- "$working_directory" | string replace -a '/' '-')
+    printf '%s/sessions/--%s--\n' "$agent_dir" "$safe"
+end
+
+function _tp_pi_session_log --description "Return the session log file for a Pi session id"
+    set -l session_dir (_tp_pi_session_dir "$argv[1]")
+    set -l session_id $argv[2]
+
+    # Pi writes the log lazily: an id is published at startup, but no file exists
+    # until the first message. Resuming an id with no log makes Pi exit 1, so a
+    # restart must confirm the log before killing anything.
+    set -l matches $session_dir/*_$session_id.jsonl
+    if test (count $matches) -eq 0; or not test -f "$matches[1]"
+        return 1
+    end
+    printf '%s\n' "$matches[1]"
+end
+
+function _tp_stop_pi --description "Stop a Pi process, preferring a graceful exit"
+    set -l pi_pid $argv[1]
+
+    if not string match -qr '^\d+$' -- "$pi_pid"
+        return 0
+    end
+    if not ps -p "$pi_pid" >/dev/null 2>&1
+        return 0
+    end
+
+    # SIGTERM is Pi's documented shutdown path: it runs session_shutdown, so the
+    # conversation is flushed and the pane options are cleared. The session log
+    # is what the restart resumes from, so letting Pi finish writing it matters.
+    kill -TERM "$pi_pid" 2>/dev/null
+
+    for attempt in (seq 1 50)
+        if not ps -p "$pi_pid" >/dev/null 2>&1
+            return 0
+        end
+        sleep 0.1
+    end
+
+    # Still alive after five seconds. The caller kills the tmux session next,
+    # which takes the process with it.
+    return 1
+end
+
+function _tp_restart_session --description "Restart a session's Pi, resuming its recorded session id"
+    set -l session_name $argv[1]
+
+    if not tmux has-session -t "=$session_name" 2>/dev/null
+        echo "No session '$session_name'" >&2
+        return 1
+    end
+
+    _tp_load_session_metadata
+    set -l row (_tp_session_metadata_row "$session_name")
+    or begin
+        echo "No session '$session_name'" >&2
+        return 1
+    end
+    set -l fields (string split -m 4 -- (_tp_metadata_separator) "$row")
+    set -l identity (_tp_live_pi_identity "$fields[2]" "$fields[3]")
+    or begin
+        echo "No live Pi session in '$session_name'; nothing was changed" >&2
+        return 1
+    end
+    set -l session_id "$identity[1]"
+    set -l pi_pid "$identity[2]"
+    set -l label "$fields[5]"
+
+    set -l original (tmux show-environment -t "$session_name" TP_CMD 2>/dev/null | string replace -- 'TP_CMD=' '')
+    set -l restart_command (_tp_restart_command "$original" "$session_id")
+    or begin
+        echo "Could not rebuild the command for '$session_name'; nothing was changed" >&2
+        return 1
+    end
+
+    # Recreate in the session's own directory, not the caller's.
+    set -l session_path (tmux display-message -p -t "$session_name" '#{session_path}' 2>/dev/null)
+    if test -z "$session_path"; or not test -d "$session_path"
+        set session_path (pwd)
+    end
+
+    # Refuse before killing anything if there is nothing to resume. Pi publishes
+    # its id at startup but writes the log only on the first message, so a
+    # never-used session has an id that `--session` cannot resolve.
+    if not _tp_pi_session_log "$session_path" "$session_id" >/dev/null
+        echo "Pi in '$session_name' has no saved conversation yet; nothing was changed" >&2
+        return 1
+    end
+
+    set -l project (string replace -r '_\d+$' '' -- "$session_name")
+    set -l number (string match -r '\d+$' -- "$session_name")
+
+    echo "Restarting $session_name (pi:"(string sub -l $__tp_pi_id_display_length -- "$session_id")")"
+    _tp_stop_pi "$pi_pid"
+    or echo "  Pi did not exit within 5s; ending the session anyway" >&2
+
+    tmux kill-session -t "=$session_name" 2>/dev/null
+
+    # _tp_create derives the session directory from the current one, so run it
+    # where the old session lived.
+    set -l previous (pwd)
+    cd "$session_path"
+    _tp_create "$project" "$number" $restart_command
+    set -l created $status
+    cd "$previous"
+    if test "$created" -ne 0
+        echo "Could not recreate '$session_name'" >&2
+        return 1
+    end
+
+    if test -n "$label"
+        _tp_set_session_name "$session_name" "$label"
+    end
+
+    # The metadata cache describes the session that was just replaced.
+    _tp_load_session_metadata
+end
+
+function _tp_restart_command --description "Rebuild a tp session's command to resume a Pi session"
+    set -l original $argv[1]
+    set -l session_id $argv[2]
+
+    if test -z "$original"
+        return 1
+    end
+
+    # TP_CMD was written by `_tp_serialize_command`, which is `string escape`.
+    # Evaluating it into a variable is that function's exact inverse: it restores
+    # the original argument boundaries, and a shell metacharacter inside a value
+    # stays inside that value rather than becoming syntax. tp already evaluates
+    # this same string to launch the session, so this reads no new input.
+    set -l parts
+    eval "set parts $original" 2>/dev/null
+    or return 1
+    if test (count $parts) -eq 0
+        return 1
+    end
+
+    # `tp pi --update-first` wraps Pi as `fish -c '<updater>; and pi $argv' -- …`,
+    # where the Pi arguments follow a `--` separator and everything before it
+    # belongs to the wrapper. Rewriting the wrapper's own flags would eat the
+    # `-c`, so only the part after the separator is treated as Pi's. Appending to
+    # the end still reaches Pi, because the wrapper forwards `$argv`.
+    set -l separator_index (contains --index -- -- $parts)
+    set -l rebuilt
+    set -l tail $parts
+    if test -n "$separator_index"
+        set rebuilt $parts[1..$separator_index]
+        set tail $parts[(math $separator_index + 1)..]
+    end
+
+    set -l skip_next 0
+    for part in $tail
+        if test "$skip_next" -eq 1
+            set skip_next 0
+            continue
+        end
+        switch "$part"
+            case --resume -r --continue -c
+                # Session selection is now ours: --session supersedes a picker or
+                # a most-recent lookup, so carrying these forward is misleading.
+            case --session --fork
+                # Drop the flag and the value that follows it.
+                set skip_next 1
+            case '--session=*' '--fork=*'
+                # Same, in joined form.
+            case '*'
+                set -a rebuilt "$part"
+        end
+    end
+
+    if test (count $rebuilt) -eq 0
+        return 1
+    end
+
+    set -a rebuilt --session "$session_id"
+    printf '%s\n' $rebuilt
+end
+
+function _tp_pi_session_id --description "Return the full Pi session id for a session, when one is live"
+    set -l row (_tp_session_metadata_row "$argv[1]")
+    or return 1
+    set -l fields (string split -m 4 -- (_tp_metadata_separator) "$row")
+    set -l identity (_tp_live_pi_identity "$fields[2]" "$fields[3]")
+    or return 1
+    printf '%s\n' "$identity[1]"
+end
+
+function _tp_pi_session_label --description "Return the abbreviated Pi session id when one is live"
+    # Pi ids are UUIDv7, whose leading hex digits are a millisecond timestamp
+    # rather than randomness: 8 characters is only a 65-second window, and
+    # sessions started together in that window share it. 13 characters reaches
+    # past the timestamp into the random block, so the shown value identifies
+    # one session. Use `tp sid <n>` when the exact full id is needed.
+    set -l identity (_tp_live_pi_identity $argv)
+    or return 1
+
+    printf 'pi:%s\n' (string sub -l $__tp_pi_id_display_length -- "$identity[1]")
 end
 
 function _tp_session_suffix --description "Return the label, Pi id, and attached markers for a session"
