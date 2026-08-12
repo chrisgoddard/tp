@@ -167,7 +167,7 @@ set -gx SSH_CONNECTION '203.0.113.10 51234 203.0.113.20 22'
 __tp_reset_attach_mock
 _tp_attach demo_001; or fail 'outside attachment with SSH metadata failed'
 assert_equal \
-    'read-close clear check-hook set set set-hook attach clear-hook clear clear' \
+    'read-close clear check-hook set set set set-hook attach clear-hook clear clear' \
     (string join ' ' $__tp_mock_events) \
     'outside attachment installs metadata stamping before attach-session'
 set -l hook_parts (string split ' ' -- "$__tp_mock_last_hook_command")
@@ -331,8 +331,58 @@ set -l stale_value (command tmux -L "$real_socket" -f /dev/null show-option -gqv
 assert_equal "$first_value" "$stale_value" 'stale source remains bound to the previous client_created'
 command tmux -L "$real_socket" -f /dev/null detach-client -t "$first_tty"
 wait $real_attach_pid
-set -l pending_options (command tmux -L "$real_socket" -f /dev/null show-options -gH 2>/dev/null | string match -r '@tp_(source|tty)_pending_')
+set -l pending_options (command tmux -L "$real_socket" -f /dev/null show-options -g 2>/dev/null | string match -r '^@tp_ssh_(source|tty|owner)_pending_')
 assert_equal 0 (count $pending_options) 'outside attach cleanup removes pending records'
+
+# An abandoned owner must not let a later plain attach mint a fresh mapping.
+set -l abandon_socket "tp-abandon-"(random)"-"(random)
+set -l abandon_helper "$test_root/abandon.fish"
+set -l abandon_tty_file "$test_root/abandon-tty"
+printf '%s\n' \
+    'set -g abandon_socket $argv[1]' \
+    'set -g repo_root $argv[2]' \
+    'function tmux' \
+    '    command tmux -L "$abandon_socket" $argv' \
+    'end' \
+    'source "$repo_root/functions/tp.fish"' \
+    'set -e TMUX' \
+    'set -gx SSH_CONNECTION '\''203.0.113.77 51234 203.0.113.20 22'\''' \
+    'set -l tty (command tty)' \
+    'printf "%s" "$tty" > "$argv[3]"' \
+    'set -l hook (_tp_prepare_ssh_source_for_attach)' \
+    'printf "%s" "$hook"' \
+    >"$abandon_helper"
+command tmux -L "$abandon_socket" -f /dev/null new-session -d -s abandoned 'sleep 30'
+set -l abandon_command (string escape -- fish "$abandon_helper" "$abandon_socket" (path resolve "$repo_root") "$abandon_tty_file")
+command script -qefc "$abandon_command" "$test_root/abandon.log" >/dev/null 2>&1 &
+set -l abandon_pid $last_pid
+set -l abandon_tty
+for attempt in (seq 1 100)
+    if test -s "$abandon_tty_file"
+        set abandon_tty (string collect < "$abandon_tty_file")
+        break
+    end
+    sleep 0.1
+end
+if test -z "$abandon_tty"
+    fail 'abandoned owner did not expose its TTY'
+end
+set -l abandon_option (_tp_ssh_source_option "$abandon_tty")
+kill "$abandon_pid" 2>/dev/null
+command tmux -L "$abandon_socket" -f /dev/null attach-session -t abandoned < /dev/null >/dev/null 2>&1 &
+set -l plain_pid $last_pid
+for attempt in (seq 1 100)
+    set -l clients (command tmux -L "$abandon_socket" -f /dev/null list-clients -F '#{client_tty}' 2>/dev/null)
+    if test (count $clients) -gt 0
+        break
+    end
+    sleep 0.1
+end
+set -l abandoned_value (command tmux -L "$abandon_socket" -f /dev/null show-option -gqv "$abandon_option" 2>/dev/null)
+assert_equal '' "$abandoned_value" 'abandoned hook cannot mint a mapping for a later plain attach'
+command tmux -L "$abandon_socket" -f /dev/null detach-client -a >/dev/null 2>&1
+wait $plain_pid 2>/dev/null
+command tmux -L "$abandon_socket" -f /dev/null kill-server >/dev/null 2>&1
 
 mkdir -p "$test_root/demo"
 cd "$test_root/demo"
