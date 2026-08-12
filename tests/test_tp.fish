@@ -288,7 +288,7 @@ tmux set-option -p -t demo_010 @pi_pid 2147483646
 
 _tp_load_session_metadata
 assert_equal \
-    ' pi:019ff650' \
+    ' pi:019ff650-ac6d' \
     (_tp_session_suffix demo_002 | string replace -- ' [labelled work]' '') \
     'a live Pi session contributes its abbreviated id'
 assert_equal '' (_tp_session_suffix demo_001) 'a session running no Pi contributes no id'
@@ -298,29 +298,29 @@ assert_equal '' (_tp_session_suffix demo_010) 'an id left behind by a dead Pi pr
 # another user's live process, so a root-owned pid stands in for that case.
 tmux set-option -p -t demo_010 @pi_pid 1
 _tp_load_session_metadata
-assert_equal ' pi:aaaaaaaa' (_tp_session_suffix demo_010) 'a live process owned by another user still counts as live'
+assert_equal ' pi:aaaaaaaa-dead' (_tp_session_suffix demo_010) 'a live process owned by another user still counts as live'
 
 # An older Pi publishes an id with no pid. The id is still shown: without a pid
 # there is nothing to disprove, and hiding it would lose real information.
 tmux set-option -p -t demo_010 -u @pi_pid
 _tp_load_session_metadata
-assert_equal ' pi:aaaaaaaa' (_tp_session_suffix demo_010) 'an id published without a pid is still shown'
+assert_equal ' pi:aaaaaaaa-dead' (_tp_session_suffix demo_010) 'an id published without a pid is still shown'
 tmux set-option -p -t demo_010 -u @pi_session_id
 
 set -l ls_output (tp ls)
-if not contains -- '  002  →  demo_002 [labelled work] pi:019ff650' $ls_output
+if not contains -- '  002  →  demo_002 [labelled work] pi:019ff650-ac6d' $ls_output
     fail 'tp ls does not show the label and Pi session id together'
 end
 printf 'ok - tp ls shows the label and Pi session id together\n'
 
 set -l global_output (tp global)
-if not contains -- '   2  →  demo_002 [labelled work] pi:019ff650' $global_output
+if not contains -- '   2  →  demo_002 [labelled work] pi:019ff650-ac6d' $global_output
     fail 'tp global does not show the Pi session id'
 end
 printf 'ok - tp global shows the Pi session id\n'
 
 set -l all_output (tp all)
-if not contains -- '  demo_002 [labelled work] pi:019ff650' $all_output
+if not contains -- '  demo_002 [labelled work] pi:019ff650-ac6d' $all_output
     fail 'tp all does not show the Pi session id'
 end
 printf 'ok - tp all shows the Pi session id\n'
@@ -330,6 +330,109 @@ printf 'ok - tp all shows the Pi session id\n'
 set -g __tp_session_metadata
 assert_equal '' (_tp_session_suffix demo_001) 'an uncached session still yields an empty suffix'
 _tp_load_session_metadata
+
+# The displayed id must reach past the UUIDv7 timestamp into the random block.
+# Eight characters is only a 65-second window, which sessions started together
+# in that window share. `tp sid` remains the source of the exact full id.
+assert_equal 13 $__tp_pi_id_display_length 'the displayed Pi id reaches past the UUIDv7 timestamp'
+assert_equal \
+    019ff650-ac6d-7641-bb90-4475b973cc82 \
+    (tp sid 2) \
+    'tp sid prints the full untruncated Pi session id'
+assert_equal \
+    019ff650-ac6d-7641-bb90-4475b973cc82 \
+    (_tp_pi_session_id demo_002) \
+    'the id resolver returns the full id'
+
+tp sid 1 >/dev/null 2>&1
+assert_equal 1 "$status" 'tp sid fails on a session running no Pi'
+tp sid 99 >/dev/null 2>&1
+assert_equal 1 "$status" 'tp sid fails on a session that does not exist'
+for invalid_sid_args in '' '1 extra'
+    set -l parts (string split ' ' -- "$invalid_sid_args" | string match -v '')
+    tp sid $parts >/dev/null 2>&1
+    assert_equal 2 "$status" "tp sid rejects '$invalid_sid_args'"
+end
+
+# --restart rebuilds the recorded command rather than inventing a new one, so
+# model/thinking flags survive while stale session selection is dropped.
+set -l SID 019ff650-ac6d-7641-bb90-4475b973cc82
+assert_equal \
+    'pi --name issue-filer --session '$SID \
+    (string join -- ' ' (_tp_restart_command 'pi --name issue-filer --resume' $SID)) \
+    'restart drops --resume and appends the recorded session id'
+assert_equal \
+    'pi --model sonnet:high --session '$SID \
+    (string join -- ' ' (_tp_restart_command 'pi --continue --model sonnet:high' $SID)) \
+    'restart drops --continue and keeps other Pi flags'
+assert_equal \
+    'pi --name keep --session '$SID \
+    (string join -- ' ' (_tp_restart_command "pi --session 019aaaaa-1111-2222-3333-444444444444 --name keep" $SID)) \
+    'restart replaces an existing --session and its value'
+assert_equal \
+    'pi --name keep --session '$SID \
+    (string join -- ' ' (_tp_restart_command 'pi --session=019aaaaa-1111 --name keep' $SID)) \
+    'restart replaces a joined --session=value'
+
+# Argument boundaries must survive the round trip through TP_CMD.
+set -l quoted_command (_tp_serialize_command pi --name 'two words' --model openai/gpt-5)
+set -l quoted_parts (_tp_restart_command "$quoted_command" $SID)
+assert_equal \
+    'pi|--name|two words|--model|openai/gpt-5|--session|'$SID \
+    (string join -- '|' $quoted_parts) \
+    'restart preserves quoted argument boundaries'
+
+# `tp pi --update-first` wraps Pi as `fish -c '<updater>' -- <pi args>`. The
+# wrapper's own -c must not be mistaken for Pi's --continue.
+set -l wrapped (_tp_restart_command "fish -c 'pi update --all; and pi \$argv' -- --name upgrade" $SID)
+assert_equal \
+    'fish|-c|pi update --all; and pi $argv|--|--name|upgrade|--session|'$SID \
+    (string join -- '|' $wrapped) \
+    'restart keeps an update-first wrapper intact'
+
+_tp_restart_command '' $SID >/dev/null 2>&1
+assert_equal 1 "$status" 'restart rejects an empty recorded command'
+
+# Pi's session directory name is derived from the working directory. Getting it
+# wrong would make every restart look like it had nothing to resume.
+assert_equal \
+    "$HOME/.pi/agent/sessions/--tmp-demo--" \
+    (_tp_pi_session_dir /tmp/demo) \
+    'the session directory mirrors the path-to-dashes rule Pi uses'
+
+# Pi publishes its id at startup but writes the log only on the first message,
+# so an id alone does not mean there is a conversation to resume.
+set -l fake_session_root "$test_root/fake-pi-home"
+set -l fake_session_dir "$fake_session_root/.pi/agent/sessions/--tmp-demo--"
+mkdir -p "$fake_session_dir"
+set -l original_home "$HOME"
+set -gx HOME "$fake_session_root"
+_tp_pi_session_log /tmp/demo $SID >/dev/null 2>&1
+assert_equal 1 "$status" 'a published id with no log file is not resumable'
+touch "$fake_session_dir/2026-01-01T00-00-00-000Z_$SID.jsonl"
+assert_equal \
+    "$fake_session_dir/2026-01-01T00-00-00-000Z_$SID.jsonl" \
+    (_tp_pi_session_log /tmp/demo $SID) \
+    'an existing log file is found for the published id'
+set -gx HOME "$original_home"
+
+# --restart refuses a session with no live Pi rather than acting on it.
+_tp_restart_session demo_001 >/dev/null 2>&1
+assert_equal 1 "$status" 'restart refuses a session running no Pi'
+if not tmux has-session -t '=demo_001' 2>/dev/null
+    fail 'restart killed a session it had refused'
+end
+printf 'ok - a refused restart leaves the session running\n'
+
+_tp_restart_session demo_404 >/dev/null 2>&1
+assert_equal 1 "$status" 'restart refuses a session that does not exist'
+
+tp 1 --restart >/dev/null 2>&1
+assert_equal 1 "$status" 'tp <n> --restart refuses a session running no Pi'
+tp global 1 --restart >/dev/null 2>&1
+assert_equal 1 "$status" 'tp global <i> --restart refuses a session running no Pi'
+tp 1 --restart extra >/dev/null 2>&1
+assert_equal 2 "$status" 'tp <n> rejects an unknown argument'
 
 _tp_set_session_name demo_002 ''
 tmux set-option -p -t demo_002 -u @pi_session_id

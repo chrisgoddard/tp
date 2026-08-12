@@ -82,9 +82,11 @@ tp pi --name auth             Name both the tmux session and the Pi session "aut
 tp pi --update-first          Update Pi and its extensions before running Pi
 tp pi --model sonnet:high     Pass all other arguments directly to Pi
 tp 2                          Attach to session 002, creating it if needed
+tp 2 --restart                Restart session 002's Pi, resuming the same conversation
 tp last                       Attach to the highest-numbered project session
 tp ls                         List sessions for the current project, with any Pi session id
 tp name 2 api                 Set or replace the label on session 002
+tp sid 2                      Print the full Pi session id running in session 002
 tp kill 2                     Kill project session 002
 tp kill                       Kill every session for the current project
 tp shot                       Print the newest uploaded screenshot path
@@ -92,6 +94,7 @@ tp shot list 5                Print the five newest screenshot paths
 tp shot dir                   Print the screenshot upload directory
 tp global                     List tp sessions across all projects
 tp global 3                   Attach to item 3 in the global list
+tp global 3 --restart         Restart item 3's Pi, resuming the same conversation
 tp all                        List every tmux session
 tp cmux                       Show tp sessions and their cmux state
 tp cmux 3                     Open or focus item 3 in cmux
@@ -277,6 +280,41 @@ Publishing them is the Pi side's job — the `@caair/pi-caair-dev-tools` package
 `tp` reads both in the single `tmux list-sessions` call it already uses for labels and attachment, because a pane option resolves in a `list-sessions` format against each session's active pane.
 
 Pi cannot unset the options when it is killed outright, so `tp` treats the published pid as the liveness check: an id whose process is gone is not shown. The check is `ps -p`, not `kill -0`, because `kill -0` fails on a live process owned by another user. An id published without a pid is shown as-is, since nothing disproves it.
+
+The listing truncates to 13 characters. Pi session ids are UUIDv7, whose leading hex digits are a millisecond timestamp rather than randomness — 8 characters is only a 65-second window, so sessions started together in that window share it. Thirteen characters reaches past the timestamp into the random block.
+
+For the exact, untruncated id, use `tp sid`:
+
+```fish
+tp sid 2      # 019ff650-ac6d-7641-bb90-4475b973cc82
+```
+
+It exits non-zero when that session is not running Pi.
+
+### Restart and resume a Pi session
+
+`--restart` stops the Pi running in a session and starts a fresh one that resumes the same conversation:
+
+```fish
+tp 2 --restart          # by project session number
+tp global 3 --restart   # by global list index
+```
+
+Use it when Pi itself needs restarting — after upgrading it, or when a session is wedged — without losing the conversation.
+
+What it does:
+
+1. Reads the session id the running Pi published.
+2. Sends `SIGTERM`, Pi's documented shutdown path, and waits up to five seconds for it to flush its session log and exit. If it outlives that, ending the tmux session takes it down.
+3. Rebuilds the original command recorded in `TP_CMD`, dropping `--resume`, `--continue`, and any previous `--session`, then appending `--session <id>`. Other flags such as `--model` and `--thinking` are kept.
+4. Recreates the tmux session with the same name, number, label, and working directory, and attaches to it.
+
+The conversation is restored from the session log, so the new Pi keeps the full history and the same session id. It is a new process with a new context window, not a live migration: work that was in flight when it was stopped is not resumed.
+
+`--restart` refuses, and changes nothing, when:
+
+- the target session is not running a live Pi — a plain shell session, or one whose Pi was killed outright and left only a stale id; or
+- that Pi has no saved conversation yet. Pi publishes its session id at startup but does not write the session log until the first message, so restarting a session you have not spoken to would resume an id that does not resolve. Nothing is killed in that case.
 
 ### SSH origin metadata
 
