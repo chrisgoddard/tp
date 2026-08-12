@@ -720,6 +720,16 @@ function _tp_pi_session_log --description "Return the session log file for a Pi 
     # until the first message. Resuming an id with no log makes Pi exit 1, so a
     # restart must confirm the log before killing anything.
     set -l matches $session_dir/*_$session_id.jsonl
+    if test (count $matches) -gt 0; and test -f "$matches[1]"
+        printf '%s\n' "$matches[1]"
+        return 0
+    end
+
+    # Pi APIs can store a conversation in another first-level directory such as
+    # sessions/forks. This is the same breadth as Pi's global --session ID lookup:
+    # every immediate child of the sessions root, without an unbounded walk.
+    set -l sessions_root (path dirname "$session_dir")
+    set matches $sessions_root/*/*_$session_id.jsonl
     if test (count $matches) -eq 0; or not test -f "$matches[1]"
         return 1
     end
@@ -777,13 +787,6 @@ function _tp_restart_session --description "Restart a session's Pi, resuming its
     set -l pi_pid "$identity[2]"
     set -l label "$fields[10]"
 
-    set -l original (tmux show-environment -t "$session_name" TP_CMD 2>/dev/null | string replace -- 'TP_CMD=' '')
-    set -l restart_command (_tp_restart_command "$original" "$session_id")
-    or begin
-        echo "Could not rebuild the command for '$session_name'; nothing was changed" >&2
-        return 1
-    end
-
     # Recreate in the session's own directory, not the caller's.
     set -l session_path (tmux display-message -p -t "$session_name" '#{session_path}' 2>/dev/null)
     if test -z "$session_path"; or not test -d "$session_path"
@@ -793,8 +796,19 @@ function _tp_restart_session --description "Restart a session's Pi, resuming its
     # Refuse before killing anything if there is nothing to resume. Pi publishes
     # its id at startup but writes the log only on the first message, so a
     # never-used session has an id that `--session` cannot resolve.
-    if not _tp_pi_session_log "$session_path" "$session_id" >/dev/null
+    set -l session_log (_tp_pi_session_log "$session_path" "$session_id")
+    or begin
         echo "Pi in '$session_name' has no saved conversation yet; nothing was changed" >&2
+        return 1
+    end
+
+    set -l original (tmux show-environment -t "$session_name" TP_CMD 2>/dev/null | string replace -- 'TP_CMD=' '')
+    # Use the exact path rather than the id. An id found in a first-level custom
+    # directory goes through Pi's global lookup, which prompts to fork it instead
+    # of reopening the saved conversation in place.
+    set -l restart_command (_tp_restart_command "$original" "$session_log")
+    or begin
+        echo "Could not rebuild the command for '$session_name'; nothing was changed" >&2
         return 1
     end
 
@@ -829,7 +843,7 @@ end
 
 function _tp_restart_command --description "Rebuild a tp session's command to resume a Pi session"
     set -l original $argv[1]
-    set -l session_id $argv[2]
+    set -l session_target $argv[2]
 
     if test -z "$original"
         return 1
@@ -884,7 +898,7 @@ function _tp_restart_command --description "Rebuild a tp session's command to re
         return 1
     end
 
-    set -a rebuilt --session "$session_id"
+    set -a rebuilt --session "$session_target"
     printf '%s\n' $rebuilt
 end
 

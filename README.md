@@ -350,7 +350,7 @@ What it does:
 
 1. Reads the session id the running Pi published.
 2. Sends `SIGTERM`, Pi's documented shutdown path, and waits up to five seconds for it to flush its session log and exit. If it outlives that, ending the tmux session takes it down.
-3. Rebuilds the original command recorded in `TP_CMD`, dropping `--resume`, `--continue`, and any previous `--session`, then appending `--session <id>`. Other flags such as `--model` and `--thinking` are kept.
+3. Finds the exact saved session file and rebuilds the original command recorded in `TP_CMD`, dropping `--resume`, `--continue`, and any previous `--session`, then appending `--session <path>`. Other flags such as `--model` and `--thinking` are kept. The lookup includes first-level session directories such as `sessions/forks`, which Pi APIs can use for a live conversation.
 4. Recreates the tmux session with the same name, number, label, and working directory, and attaches to it.
 
 The conversation is restored from the session log, so the new Pi keeps the full history and the same session id. It is a new process with a new context window, not a live migration: work that was in flight when it was stopped is not resumed.
