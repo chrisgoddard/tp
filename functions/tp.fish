@@ -2,6 +2,14 @@ function tp --description "Manage tmux sessions for the current project director
     set -l project (basename (pwd) | string trim -l -c '.')
     set -l cmd $argv[1]
 
+    # Decide colour once, here. `isatty stdout` is only truthful at the top
+    # level: every listing line is built inside a command substitution, and a
+    # substitution's stdout is a pipe even when the terminal is a tty, so a
+    # check further down would disable colour permanently. `set_color` writes
+    # its escapes unconditionally, so nothing else suppresses them for `tp ls |
+    # cat`.
+    _tp_set_colour_enabled
+
     if test -z "$cmd"
         set -l existing (_tp_list_sessions $project)
         if test (count $existing) -eq 0
@@ -578,17 +586,30 @@ function _tp_pi_state_fields --description "Render state, tool, context and mode
     end
 
     # A marker gives the state a shape that reads at a glance down a column,
-    # which matters most for the one state a user acts on: blocked.
+    # which matters most for the one state a user acts on: blocked. Colour says
+    # the same thing again, so the meaning survives a monochrome terminal, a
+    # pipe, and the ~8% of men with red-green colour blindness.
     set -l marker
+    set -l colour
     switch $state
         case blocked
+            # The only state that needs the user. Yellow reads as "your turn"
+            # without the alarm of red, which is reserved for real failure.
             set marker ⏸
-        case tool thinking
+            set colour yellow
+        case tool
             set marker ●
+            set colour cyan
+        case thinking
+            set marker ●
+            set colour blue
         case idle
+            # Nothing to do here, so it should recede rather than compete.
             set marker ○
+            set colour brblack
         case '*'
             set marker ·
+            set colour normal
     end
 
     set -l elapsed
@@ -610,13 +631,21 @@ function _tp_pi_state_fields --description "Render state, tool, context and mode
     if test -n "$elapsed"
         set headline "$headline $elapsed"
     end
-    printf '%s\n' "$headline"
+    _tp_colour $colour "$headline"
 
+    # Context usage is only worth a colour when it is worth acting on: a session
+    # near its limit is about to compact. Below that it stays unremarkable.
     if string match -qr '^\d+$' -- "$ctx_pct"
-        printf '%s%%\n' "$ctx_pct"
+        set -l ctx_colour brblack
+        if test "$ctx_pct" -ge 85
+            set ctx_colour red
+        else if test "$ctx_pct" -ge 70
+            set ctx_colour yellow
+        end
+        _tp_colour $ctx_colour "$ctx_pct%"
     end
     if test -n "$model"
-        printf '%s\n' "$model"
+        _tp_colour brblack "$model"
     end
 end
 
@@ -645,7 +674,9 @@ function _tp_fit_fields --description "Join as many fields as fit the given widt
         # " · " is three columns; stop at the first field that would overflow so
         # the fields stay in priority order rather than filling gaps out of turn.
         set -l candidate "$out · $field"
-        if test (math "$used" + (string length -- "$candidate")) -gt "$width"
+        # Measured on the visible text: a coloured field carries escape bytes
+        # that occupy no columns, and counting them would drop fields that fit.
+        if test (math "$used" + (_tp_visible_length "$candidate")) -gt "$width"
             break
         end
         set out "$candidate"
@@ -672,6 +703,54 @@ set -g __tp_pi_id_display_length 13
 # indent, the session number or index, and the session name. Measured against
 # the longest real form (`   12  →  pi-caair-dev-tools_012`), rounded up.
 set -g __tp_state_prefix_budget 34
+
+function _tp_set_colour_enabled --description "Decide once whether listings may use colour"
+    # Honour the two conventions a user already expects, then fall back to
+    # whether this is a terminal at all.
+    if set -q NO_COLOR
+        set -g __tp_colour 0
+        return 0
+    end
+    if set -q TP_COLOR
+        # TP_COLOR=always keeps colour through a pipe, for `tp ls | less -R`.
+        switch "$TP_COLOR"
+            case always 1 yes true
+                set -g __tp_colour 1
+                return 0
+            case never 0 no false
+                set -g __tp_colour 0
+                return 0
+        end
+    end
+    if test "$TERM" = dumb
+        set -g __tp_colour 0
+        return 0
+    end
+
+    if isatty stdout
+        set -g __tp_colour 1
+    else
+        set -g __tp_colour 0
+    end
+end
+
+function _tp_colour --description "Wrap text in a colour when listings are coloured"
+    set -l colour $argv[1]
+    set -l text $argv[2..]
+
+    if not set -q __tp_colour; or test "$__tp_colour" -ne 1
+        printf '%s\n' "$text"
+        return 0
+    end
+
+    printf '%s%s%s\n' (set_color $colour) "$text" (set_color normal)
+end
+
+function _tp_visible_length --description "Length of a string ignoring colour escapes"
+    # `string length` counts the bytes of an escape sequence, which would make a
+    # coloured field look far wider than it prints and drop fields that fit.
+    string length -- (string replace -ra '\e\[[0-9;]*m' '' -- "$argv[1]")
+end
 
 function _tp_live_pi_identity --description "Return the Pi session id and pid when a live Pi published them"
     set -l session_id (string trim -- "$argv[1]")
@@ -932,7 +1011,9 @@ function _tp_session_suffix --description "Return the label, Pi id, and attached
 
     set -l suffix ""
     if test -n "$label"
-        set suffix "$suffix [$label]"
+        # The label is what a user scans for, so it stays the brightest thing
+        # after the session name itself.
+        set suffix "$suffix "(_tp_colour green "[$label]")
     end
 
     # The state is only shown for a Pi that is live: a SIGKILLed Pi leaves its
@@ -941,10 +1022,12 @@ function _tp_session_suffix --description "Return the label, Pi id, and attached
     set -l pi_label (_tp_pi_session_label "$session_id" "$pi_pid")
     if test $status -eq 0
         set pi_live 1
-        set suffix "$suffix $pi_label"
+        # An id is for copying, not reading: it should not compete with the
+        # label or the state.
+        set suffix "$suffix "(_tp_colour brblack "$pi_label")
     end
     if test "$attached" != 0
-        set suffix "$suffix (attached)"
+        set suffix "$suffix "(_tp_colour magenta "(attached)")
     end
 
     if test "$pi_live" -eq 1
@@ -954,7 +1037,7 @@ function _tp_session_suffix --description "Return the label, Pi id, and attached
             # The caller's own prefix (indent, number, session name) is not known
             # here, so budget for it rather than overflowing the line.
             set -l width (_tp_terminal_width)
-            set -l reserved (math (string length -- "$suffix") + $__tp_state_prefix_budget)
+            set -l reserved (math (_tp_visible_length "$suffix") + $__tp_state_prefix_budget)
             set suffix "$suffix"(_tp_fit_fields "$width" "$reserved" $state_fields)
         end
     end

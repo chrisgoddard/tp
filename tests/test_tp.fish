@@ -423,6 +423,74 @@ _tp_load_session_metadata
 assert_equal '' (_tp_session_suffix demo_001) 'a state with no identity behind it is not shown'
 tmux set-option -p -t demo_001 -u @pi_state
 
+# ── Colour ──────────────────────────────────────────────────────────────────
+#
+# Colour is decided once at `tp` entry: `isatty stdout` is only truthful at the
+# top level, and every listing line is built inside a command substitution whose
+# stdout is a pipe even on a terminal.
+
+set -l saved_no_color_set 0
+set -q NO_COLOR; and set saved_no_color_set 1
+set -e NO_COLOR
+
+set -gx TP_COLOR never
+_tp_set_colour_enabled
+assert_equal 0 "$__tp_colour" 'TP_COLOR=never disables colour'
+assert_equal 'plain' (_tp_colour red plain) 'no escapes are emitted when colour is off'
+
+set -gx TP_COLOR always
+_tp_set_colour_enabled
+assert_equal 1 "$__tp_colour" 'TP_COLOR=always keeps colour through a pipe'
+# set_color writes escapes unconditionally, so the wrapper is what suppresses
+# them; when it does not, the text must still be intact between them.
+set -l coloured (_tp_colour red plain)
+assert_equal 'plain' (string replace -ra '\e\[[0-9;]*m' '' -- "$coloured") 'colour wraps the text without altering it'
+if test "$coloured" = plain
+    fail 'TP_COLOR=always emitted no escapes'
+end
+printf 'ok - TP_COLOR=always emits escapes\n'
+
+# NO_COLOR is honoured over everything: it is the convention users already have.
+set -gx NO_COLOR 1
+_tp_set_colour_enabled
+assert_equal 0 "$__tp_colour" 'NO_COLOR wins over TP_COLOR=always'
+set -e NO_COLOR
+
+# A width decision must not change because a field carries colour escapes.
+assert_equal 7 (_tp_visible_length (_tp_colour red blocked)) 'a coloured string measures its visible width'
+assert_equal 7 (_tp_visible_length blocked) 'an uncoloured string measures the same'
+
+set -gx TP_COLOR always
+_tp_set_colour_enabled
+assert_equal \
+    ' · one · two' \
+    (string replace -ra '\e\[[0-9;]*m' '' -- (_tp_fit_fields 12 0 (_tp_colour red one) (_tp_colour red two))) \
+    'colour escapes do not consume the width budget'
+
+# The states a user acts on must be visually distinct from each other.
+set -l blocked_line (_tp_pi_state_fields blocked bash (date +%s) '' '')
+set -l idle_line (_tp_pi_state_fields idle '' (date +%s) '' '')
+if test "$blocked_line[1]" = "$idle_line[1]"
+    fail 'blocked and idle render identically'
+end
+printf 'ok - blocked and idle are visually distinct\n'
+
+# Context usage is coloured only when it is worth acting on.
+set -l low (_tp_pi_state_fields idle '' (date +%s) 24 '')
+set -l high (_tp_pi_state_fields idle '' (date +%s) 91 '')
+assert_equal '24%' (string replace -ra '\e\[[0-9;]*m' '' -- "$low[2]") 'a low context percent still reads plainly'
+assert_equal '91%' (string replace -ra '\e\[[0-9;]*m' '' -- "$high[2]") 'a high context percent still reads plainly'
+if test "$low[2]" = "$high[2]"
+    fail 'a nearly-full context window is not distinguished'
+end
+printf 'ok - a nearly-full context window is coloured differently\n'
+
+set -gx TP_COLOR never
+_tp_set_colour_enabled
+if test "$saved_no_color_set" -eq 1
+    set -gx NO_COLOR 1
+end
+
 for state_option in @pi_state @pi_tool @pi_state_since @pi_ctx_pct @pi_model
     tmux set-option -p -t demo_002 -u $state_option
 end
