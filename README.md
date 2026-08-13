@@ -382,14 +382,16 @@ The conversation is restored from the session log, so the new Pi keeps the full 
 Before an outside client attaches, `tp` records the first whitespace-delimited field of that shell's `SSH_CONNECTION` in a server-wide tmux user option keyed by the attaching TTY:
 
 ```text
-@tp_ssh_source_<sanitized-client-tty> = <source-ip>
+@tp_ssh_source_<sanitized-client-tty> = v1 ip=<source-ip> created=<client_created>
 ```
 
 For example, `/dev/pts/7` uses `@tp_ssh_source_dev_pts_7`, while `/dev/ttys003` uses `@tp_ssh_source_dev_ttys003`. `tp` trims the full TTY, rejects empty values, control characters, and values longer than 255 characters, replaces each run outside `[A-Za-z0-9]` with `_`, trims leading and trailing `_`, and rejects an empty result.
 
-Each valid outside attachment overwrites its exact mapping. Missing or invalid SSH metadata unsets that mapping so a reused TTY cannot inherit an old source. When `tp` switches sessions from inside tmux, it reads and preserves the current `#{client_tty}` mapping instead of using the pane's potentially stale `SSH_CONNECTION`.
+The attaching client does not exist until `attach-session` starts. For valid SSH metadata, `tp` therefore clears the mapping, installs a one-shot `client-attached` hook, and lets that hook stamp the real `#{client_created}`. The hook also checks the attaching TTY and clears its temporary values. If the hook cannot obtain a valid creation value, the mapping remains clear. Missing or invalid SSH metadata clears the exact mapping. A bare source IP was unsafe because a TTY is reused and the server-global option outlives its client: a later plain `tmux attach` could otherwise present the previous client's source. Consumers must compare `created` with the currently attached client's `#{client_created}` and refuse a mismatch.
 
-The stored source is only a token from SSH connection metadata. A consumer must validate it as an IP address before use and should query mappings only for clients currently attached to the relevant session. `tp` does not enumerate stale mappings and does not depend on Pi or Tailscale.
+When `tp` switches sessions from inside tmux, it reads and preserves the current `#{client_tty}` mapping instead of using the pane's potentially stale `SSH_CONNECTION`. The stored source is only a token from SSH connection metadata; a consumer must validate it as an IP address. The consumer's `created` comparison is what makes a stale record harmless when a TTY is reused.
+
+Known limitations are owner PID reuse and hook-slot reservation. If the original owner PID is recycled before the hook fires, `kill -0` alone cannot distinguish the unrelated process. The primary hook slot uses the Fish PID, but the random fallback has a check-then-set race between concurrent processes. `tp` narrows these windows; the lifecycle-bound `created` comparison remains the protection against stale records. `tp` does not enumerate stale mappings and does not depend on Pi or Tailscale.
 
 ## How project names work
 
