@@ -147,6 +147,7 @@ export const COMMANDS: CommandSpec[] = [
 		positionals: [{ name: "selector", rest: true }],
 		flags: [
 			restartFlag,
+			{ long: "watch", short: "w", description: "Watch the global listing" },
 			{ long: "json", description: "Print JSON" },
 			{ long: "recent", description: "Sort by recent activity" },
 			helpFlag,
@@ -171,14 +172,20 @@ export const COMMANDS: CommandSpec[] = [
 		name: "w",
 		aliases: [],
 		positionals: [],
-		flags: [helpFlag],
+		flags: [
+			{ long: "global", short: "g", description: "Include every project" },
+			helpFlag,
+		],
 		help: "Watch sessions live",
 	},
 	{
 		name: "b",
 		aliases: [],
 		positionals: [],
-		flags: [helpFlag],
+		flags: [
+			{ long: "global", short: "g", description: "Include every project" },
+			helpFlag,
+		],
 		help: "Attach to a blocked session",
 	},
 	{
@@ -204,21 +211,24 @@ export const COMMANDS: CommandSpec[] = [
 		name: "doctor",
 		aliases: [],
 		positionals: [],
-		flags: [helpFlag],
+		flags: [{ long: "json", description: "Print JSON" }, helpFlag],
 		help: "Check the tp environment",
 	},
 	{
 		name: "update",
 		aliases: [],
 		positionals: [],
-		flags: [helpFlag],
+		flags: [{ long: "check", description: "Check for updates" }, helpFlag],
 		help: "Update tp from its git clone",
 	},
 	{
 		name: "bind",
 		aliases: [],
 		positionals: [],
-		flags: [helpFlag],
+		flags: [
+			{ long: "print", description: "Print config without writing" },
+			helpFlag,
+		],
 		help: "Install tp tmux bindings",
 	},
 	{
@@ -232,7 +242,11 @@ export const COMMANDS: CommandSpec[] = [
 		name: "restore",
 		aliases: [],
 		positionals: [],
-		flags: [helpFlag],
+		flags: [
+			{ long: "list", description: "List saved sessions" },
+			{ long: "project", value: true, description: "Limit to a project" },
+			helpFlag,
+		],
 		help: "Restore sessions after reboot",
 	},
 	{
