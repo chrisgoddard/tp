@@ -1,11 +1,21 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	statSync,
+	watch,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	type ShotTransport,
+	TaildriveTransport,
 	runAsyncWorker,
 	stageSourceForAsync,
+	syncUpload,
 } from "../../src/lib/shot";
 
 class RecordingTransport implements ShotTransport {
@@ -135,4 +145,85 @@ test("async worker records failure and cleans remote paths", () => {
 	expect(status).toBe(1);
 	expect(readFileSync(files.log, "utf8")).toContain("Failed: upload failed");
 	expect(transport.calls.at(-1)).toContain("remove:");
+});
+
+test("taildrive sync and async uploads publish private files in the share", async () => {
+	const files = jobFiles();
+	const share = join(files.root, "taildrive");
+	mkdirSync(share);
+	const transport = new TaildriveTransport(share, { HOME: files.root });
+
+	const sync = syncUpload(files.source, {
+		host: "test",
+		remoteDir: "/pi/.cache/pi/screenshots",
+		notifier: "none",
+		env: { HOME: files.root },
+		transport,
+		transportKind: "taildrive",
+	});
+	const syncPath = join(share, sync.path.split("/").at(-1) ?? "");
+	expect(readFileSync(syncPath, "utf8")).toBe("before");
+	expect(statSync(syncPath).mode & 0o777).toBe(0o600);
+
+	const asyncPath = "/pi/.cache/pi/screenshots/async.png";
+	const asyncEvents: string[] = [];
+	const asyncWatcher = watch(share, { persistent: false }, (event, name) => {
+		if (event === "rename" && name) asyncEvents.push(name.toString());
+	});
+	const status = runAsyncWorker(
+		{
+			host: "test",
+			transportKind: "taildrive",
+			sourcePath: files.source,
+			remoteDir: "/pi/.cache/pi/screenshots",
+			remotePath: asyncPath,
+			logPath: files.log,
+			removeSource: false,
+			notifier: "none",
+		},
+		{ host: "test", notifier: "none", transport },
+	);
+	await Bun.sleep(25);
+	asyncWatcher.close();
+
+	expect(status).toBe(0);
+	expect(
+		asyncEvents.some((name) => name.startsWith("..async.png.uploading.")),
+	).toBe(true);
+	expect(readFileSync(join(share, "async.png"), "utf8")).toBe("before");
+	expect(statSync(join(share, "async.png")).mode & 0o777).toBe(0o600);
+	expect(readdirSync(share).filter((name) => name.startsWith(".")).length).toBe(
+		0,
+	);
+});
+
+test("taildrive upload exposes only the atomic rename result", async () => {
+	const files = jobFiles();
+	const share = join(files.root, "taildrive");
+	mkdirSync(share);
+	const transport = new TaildriveTransport(share);
+	const events: string[] = [];
+	const watcher = watch(share, { persistent: false }, (event, name) => {
+		if (event === "rename" && name) events.push(name.toString());
+	});
+
+	transport.upload(files.source, "/pi/screenshots/observed.png");
+	await Bun.sleep(25);
+	watcher.close();
+
+	expect(events.some((name) => name.startsWith(".observed.png."))).toBe(true);
+	expect(statSync(join(share, "observed.png")).mode & 0o777).toBe(0o600);
+	expect(readdirSync(share).filter((name) => name.startsWith(".")).length).toBe(
+		0,
+	);
+});
+
+test("taildrive reports a missing mounted share without creating it", () => {
+	const files = jobFiles();
+	const missing = join(files.root, "not-mounted");
+	const transport = new TaildriveTransport(missing);
+
+	expect(() => transport.prepareDirectory("/pi/screenshots")).toThrow(
+		`taildrive transport: mounted share directory '${missing}' does not exist`,
+	);
 });

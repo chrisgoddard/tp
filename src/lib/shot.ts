@@ -5,6 +5,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -20,6 +21,8 @@ export interface ShotTransport {
 	remove(paths: readonly string[]): void;
 }
 
+export type ShotTransportKind = "ssh" | "taildrive";
+
 export interface ShotOptions {
 	host: string;
 	remoteDir?: string;
@@ -27,6 +30,7 @@ export interface ShotOptions {
 	logDir?: string;
 	env?: Record<string, string | undefined>;
 	transport?: ShotTransport;
+	transportKind?: ShotTransportKind;
 }
 
 export interface ShotResult {
@@ -173,6 +177,131 @@ export class SshTransport implements ShotTransport {
 			`rm -f ${paths.map(shellQuote).join(" ")}`,
 		]);
 	}
+}
+
+/**
+ * Upload screenshots through a locally mounted Taildrive share.
+ *
+ * The share path on the capture computer is not the path Pi sees. The
+ * configured remote directory must therefore map this local directory to the
+ * same remote Pi-host path that is copied to the clipboard.
+ */
+export class TaildriveTransport implements ShotTransport {
+	readonly taildriveDir: string;
+
+	constructor(
+		taildriveDir: string,
+		private readonly env: Record<string, string | undefined> = process.env,
+	) {
+		this.taildriveDir = expandLocalDir(taildriveDir, env);
+	}
+
+	prepareDirectory(remoteDir?: string): string {
+		let info: ReturnType<typeof statSync>;
+		try {
+			info = statSync(this.taildriveDir);
+		} catch {
+			throw new Error(
+				`taildrive transport: mounted share directory '${this.taildriveDir}' does not exist`,
+			);
+		}
+		if (!info.isDirectory())
+			throw new Error(
+				`taildrive transport: mounted share path '${this.taildriveDir}' is not a directory`,
+			);
+
+		const prepared =
+			remoteDir === undefined
+				? join(this.env.HOME || homedir(), ".cache/pi/screenshots")
+				: remoteDirPath(remoteDir, this.env);
+		if (!prepared.startsWith("/"))
+			throw new Error(
+				"taildrive transport: remote screenshot directory must be an absolute path",
+			);
+		return prepared;
+	}
+
+	upload(sourcePath: string, remotePath: string): void {
+		const destination = this.localPath(remotePath);
+		const temporary = join(
+			this.taildriveDir,
+			`.${basename(remotePath)}.${randomUUID()}.uploading`,
+		);
+		try {
+			writeFileSync(temporary, readFileSync(sourcePath), { mode: 0o600 });
+			chmodSync(temporary, 0o600);
+			// Rename within the mounted share so Pi never observes a partial file.
+			renameSync(temporary, destination);
+		} catch (error) {
+			rmSync(temporary, { force: true });
+			throw new Error(
+				`taildrive transport: copy failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+
+	protect(remotePath: string): void {
+		try {
+			chmodSync(this.localPath(remotePath), 0o600);
+		} catch (error) {
+			throw new Error(
+				`taildrive transport: could not make the uploaded screenshot private: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+
+	publish(tempPath: string, finalPath: string): void {
+		const temporary = this.localPath(tempPath);
+		const destination = this.localPath(finalPath);
+		try {
+			chmodSync(temporary, 0o600);
+			renameSync(temporary, destination);
+		} catch (error) {
+			throw new Error(
+				`taildrive transport: could not publish the final path: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+
+	remove(paths: readonly string[]): void {
+		if (paths.length === 0) return;
+		for (const path of paths) {
+			try {
+				rmSync(this.localPath(path), { force: true });
+			} catch {
+				// Cleanup must not hide the original transport failure.
+			}
+		}
+	}
+
+	private localPath(remotePath: string): string {
+		const name = basename(remotePath);
+		if (!name || name === "." || name === "..")
+			throw new Error("taildrive transport: invalid screenshot path");
+		return join(this.taildriveDir, name);
+	}
+}
+
+function expandLocalDir(
+	directory: string,
+	env: Record<string, string | undefined>,
+): string {
+	if (directory === "~") return env.HOME || homedir();
+	if (directory.startsWith("~/"))
+		return join(env.HOME || homedir(), directory.slice(2));
+	return directory;
+}
+
+export function createShotTransport(
+	kind: ShotTransportKind,
+	host: string,
+	taildriveDir?: string,
+	env: Record<string, string | undefined> = process.env,
+): ShotTransport {
+	if (kind === "ssh") return new SshTransport(host);
+	if (!taildriveDir?.trim())
+		throw new Error("taildrive transport requires shot.taildrive_dir");
+	return new TaildriveTransport(taildriveDir, env);
 }
 
 function commandExists(command: string): boolean {
@@ -322,6 +451,9 @@ export function syncUpload(
 	options: ShotOptions,
 ): ShotResult {
 	const transport = options.transport ?? new SshTransport(options.host);
+	const transportKind =
+		options.transportKind ??
+		(transport instanceof TaildriveTransport ? "taildrive" : "ssh");
 	const logPath = newLog(options);
 	let remotePath = "";
 	try {
@@ -334,16 +466,22 @@ export function syncUpload(
 		return { path: remotePath, logPath };
 	} catch (error) {
 		if (remotePath) transport.remove([remotePath]);
-		logLine(
-			logPath,
-			`Failed: ${error instanceof Error ? error.message : String(error)}`,
+		const detail = error instanceof Error ? error.message : String(error);
+		const failure = `${detail} (${transportKind} transport)`;
+		logLine(logPath, `Failed: ${failure}`);
+		notify(
+			"failed",
+			`Screenshot upload failed (${transportKind} transport)`,
+			options.notifier ?? "auto",
 		);
-		throw error;
+		throw new Error(failure);
 	}
 }
 
 export interface AsyncJob {
 	host: string;
+	transportKind?: ShotTransportKind;
+	taildriveDir?: string;
 	sourcePath: string;
 	remoteDir: string;
 	remotePath: string;
@@ -354,8 +492,18 @@ export interface AsyncJob {
 }
 
 export function runAsyncWorker(job: AsyncJob, options: ShotOptions): number {
-	const transport = options.transport ?? new SshTransport(job.host);
+	let transport: ShotTransport | undefined = options.transport;
+	const transportKind =
+		options.transportKind ??
+		job.transportKind ??
+		(transport instanceof TaildriveTransport ? "taildrive" : "ssh");
 	try {
+		transport ??= createShotTransport(
+			transportKind,
+			job.host,
+			job.taildriveDir,
+			options.env,
+		);
 		const preparedDir = transport.prepareDirectory(job.remoteDir);
 		if (preparedDir !== job.remoteDir)
 			throw new Error(
@@ -369,14 +517,17 @@ export function runAsyncWorker(job: AsyncJob, options: ShotOptions): number {
 		return 0;
 	} catch (error) {
 		const tempPath = `${job.remoteDir}/.${basename(job.remotePath)}.uploading`;
-		transport.remove([tempPath, job.remotePath]);
-		logLine(
-			job.logPath,
-			`Failed: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		try {
+			transport?.remove([tempPath, job.remotePath]);
+		} catch {
+			// Cleanup must not hide the original transport failure.
+		}
+		const detail = error instanceof Error ? error.message : String(error);
+		const failure = `${detail} (${transportKind} transport)`;
+		logLine(job.logPath, `Failed: ${failure}`);
 		notify(
 			"failed",
-			"Screenshot upload failed; the copied path is not available",
+			`Screenshot upload failed (${transportKind} transport); the copied path is not available`,
 			job.notifier,
 		);
 		return 1;

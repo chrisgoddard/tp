@@ -4,8 +4,10 @@ import { chmodSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { type TpConfig, loadConfig } from "../lib/config";
 import {
 	type AsyncJob,
+	type ShotTransportKind,
 	captureImage,
 	copyToClipboard,
+	createShotTransport,
 	expandRemoteDir,
 	notify,
 	recordShotFailure,
@@ -27,7 +29,7 @@ interface ParsedArgs {
 
 function usage(): string {
 	return [
-		"Usage: tp-shot [--async] [--host HOST] [IMAGE]",
+		"Usage: tp-shot [--async] [--host HOST] [--transport ssh|taildrive] [IMAGE]",
 		"       tp-shot --notify-test",
 		"",
 		"Capture or upload an image for a remote Pi session.",
@@ -95,6 +97,7 @@ function runWorker(raw: string): number {
 	const result = runAsyncWorker(job, {
 		host: job.host,
 		notifier: job.notifier,
+		env: { ...process.env },
 	});
 	rmSync(job.marker, { force: true });
 	rmSync(job.ownership, { force: true });
@@ -149,12 +152,26 @@ async function main(): Promise<number> {
 		console.error("tp-shot: SSH host cannot be empty");
 		return 2;
 	}
-	if (config.shot.transport !== "ssh") {
+	if (
+		config.shot.transport !== "ssh" &&
+		config.shot.transport !== "taildrive"
+	) {
 		console.error(
-			`tp-shot: transport '${config.shot.transport}' is not available`,
+			`tp-shot: invalid transport '${config.shot.transport}' (expected ssh or taildrive)`,
 		);
 		return 2;
 	}
+	const transportKind = config.shot.transport as ShotTransportKind;
+	if (transportKind === "taildrive" && !config.shot.taildrive_dir?.trim()) {
+		console.error("tp-shot: taildrive transport requires shot.taildrive_dir");
+		return 2;
+	}
+	const transport = createShotTransport(
+		transportKind,
+		host,
+		config.shot.taildrive_dir,
+		env,
+	);
 	const notifier = config.shot.notifier || "auto";
 	if (parsed.notifyTest) {
 		if (
@@ -234,6 +251,8 @@ async function main(): Promise<number> {
 			}
 			const job: AsyncJob = {
 				host,
+				transportKind,
+				taildriveDir: config.shot.taildrive_dir,
 				sourcePath,
 				remoteDir,
 				remotePath,
@@ -270,6 +289,8 @@ async function main(): Promise<number> {
 			remoteDir: config.shot.remote_dir,
 			notifier,
 			env,
+			transport,
+			transportKind,
 		});
 		copyToClipboard(result.path);
 		notify("ready", "Screenshot ready to paste", notifier);
