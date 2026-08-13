@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { basename } from "node:path";
+import { listingBreakpointWidths } from "./fixtures/listing-width";
 import { assertListingSchema } from "./fixtures/listings-json-schema";
 import { ScratchTmuxServer, runTp } from "./harness";
 
@@ -49,17 +50,34 @@ test("listing rendering breakpoints drop rightmost fields", async () => {
 			["@pi_model", "model"],
 		])
 			server.run(["set-option", "-p", "-t", pane, option, value]);
-		const narrow = await runTp(["ls"], {
-			env: { ...server.env, COLUMNS: "65" },
-		});
-		expect(narrow.stdout).toContain("blocked:bash");
-		expect(narrow.stdout).not.toContain("model");
 		const wide = await runTp(["ls"], {
 			env: { ...server.env, COLUMNS: "200" },
 		});
 		expect(wide.stdout).toContain("blocked:bash");
 		expect(wide.stdout).toContain("61%");
 		expect(wide.stdout).toContain("model");
+		const widths = listingBreakpointWidths(wide.stdout, `${project}_001`);
+
+		const modelDropped = await runTp(["ls"], {
+			env: { ...server.env, COLUMNS: String(widths.model) },
+		});
+		expect(modelDropped.stdout).toContain("blocked:bash");
+		expect(modelDropped.stdout).toContain("61%");
+		expect(modelDropped.stdout).not.toContain("model");
+
+		const contextDropped = await runTp(["ls"], {
+			env: { ...server.env, COLUMNS: String(widths.context) },
+		});
+		expect(contextDropped.stdout).toContain("blocked:bash");
+		expect(contextDropped.stdout).not.toContain("61%");
+		expect(contextDropped.stdout).not.toContain("model");
+
+		const stateDropped = await runTp(["ls"], {
+			env: { ...server.env, COLUMNS: String(widths.state) },
+		});
+		expect(stateDropped.stdout).not.toContain("blocked:bash");
+		expect(stateDropped.stdout).not.toContain("61%");
+		expect(stateDropped.stdout).not.toContain("model");
 	});
 });
 

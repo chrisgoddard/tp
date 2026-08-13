@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { basename } from "node:path";
+import { listingBreakpointWidths } from "./fixtures/listing-width";
 import { ScratchTmuxServer, runTp, waitFor } from "./harness";
 
 const project = basename(process.cwd());
@@ -409,13 +410,36 @@ test("a dead Pi shows neither its id nor its last state", async () => {
 });
 test("a narrow terminal keeps the state and drops the rest", async () => {
 	await withServer(async (server) => {
-		const { result } = await fakeListing(
+		const { result: wide } = await fakeListing(
 			server,
 			{ ctxPct: 61, model: "model" },
-			{ COLUMNS: "65" },
+			{ COLUMNS: "200" },
 		);
-		expect(result.stdout).toContain("blocked:bash");
-		expect(result.stdout).not.toContain("model");
+		expect(wide.stdout).toContain("blocked:bash");
+		expect(wide.stdout).toContain("61%");
+		expect(wide.stdout).toContain("model");
+		const widths = listingBreakpointWidths(wide.stdout, `${project}_002`);
+
+		const modelDropped = await listing(server, ["ls"], {
+			COLUMNS: String(widths.model),
+		});
+		expect(modelDropped.stdout).toContain("blocked:bash");
+		expect(modelDropped.stdout).toContain("61%");
+		expect(modelDropped.stdout).not.toContain("model");
+
+		const contextDropped = await listing(server, ["ls"], {
+			COLUMNS: String(widths.context),
+		});
+		expect(contextDropped.stdout).toContain("blocked:bash");
+		expect(contextDropped.stdout).not.toContain("61%");
+		expect(contextDropped.stdout).not.toContain("model");
+
+		const stateDropped = await listing(server, ["ls"], {
+			COLUMNS: String(widths.state),
+		});
+		expect(stateDropped.stdout).not.toContain("blocked:bash");
+		expect(stateDropped.stdout).not.toContain("61%");
+		expect(stateDropped.stdout).not.toContain("model");
 	});
 });
 test("a state with no identity behind it is not shown", async () => {
