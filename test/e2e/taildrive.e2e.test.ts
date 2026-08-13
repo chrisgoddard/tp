@@ -50,6 +50,7 @@ async function runSelectionCase(options: {
 				env: {
 					...kit.env,
 					HOME: kit.directory,
+					XDG_CONFIG_HOME: undefined,
 					TP_SHOT_NOTIFIER: "none",
 					TP_SHOT_REMOTE_DIR: "/pi/screenshots",
 					TP_SHOT_TRANSPORT: options.envTransport,
@@ -130,6 +131,7 @@ test("taildrive copies sync output to the remote clipboard path", async () => {
 			env: {
 				...kit.env,
 				HOME: kit.directory,
+				XDG_CONFIG_HOME: undefined,
 				TP_SHOT_NOTIFIER: "none",
 				TP_CLIPBOARD: clipboard,
 			},
@@ -160,6 +162,7 @@ test("missing taildrive mount fails, logs the transport, and notifies", async ()
 			env: {
 				...kit.env,
 				HOME: kit.directory,
+				XDG_CONFIG_HOME: undefined,
 				TP_SHOT_LOG_DIR: logs,
 				TP_SHOT_NOTIFIER: "osascript",
 			},

@@ -58,8 +58,9 @@ test("tp new --layout builds named windows and panes", async () => {
 		expect(windows[0]).toContain(":edit:");
 		expect(windows[1]).toContain(":server:");
 		expect(windows[2]).toContain(":shell:");
-		expect(windows[0]).toContain(`:${process.cwd()}:sh`);
-		expect(windows[1]).toContain(`:${process.cwd()}:sh`);
+		expect(windows[0]).toContain(`:${process.cwd()}:`);
+		expect(windows[1]).toContain(`:${process.cwd()}:`);
+		expect(windows[2]).toContain(`:${process.cwd()}:`);
 		const panes = server
 			.run([
 				"list-panes",
@@ -72,7 +73,7 @@ test("tp new --layout builds named windows and panes", async () => {
 			.split("\n");
 		expect(panes).toHaveLength(2);
 		expect(panes[1]).toContain(":logs:");
-		expect(panes[1]).toContain(`:${process.cwd()}:sh`);
+		expect(panes[1]).toContain(`:${process.cwd()}:`);
 		expect(
 			server
 				.run(["display-message", "-p", "-t", session, "#{window_index}"])

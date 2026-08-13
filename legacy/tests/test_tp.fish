@@ -742,7 +742,11 @@ assert_equal \
 # Pi offers an ID found outside the working-directory session folder as a fork.
 # Restart with the exact saved path so a custom-directory conversation reopens
 # in place without that prompt.
-_tp_create restartable 1 sleep 60; or fail 'could not create restartable_001'
+# Do not use _tp_create here: its command wrapper is Fish syntax, while CI's
+# tmux default shell is Bash. The restart behavior under test only needs a
+# live session with a recorded Pi id.
+tmux new-session -d -s restartable_001 -c (pwd) -- sleep 60; or fail 'could not create restartable_001'
+tmux set-environment -t restartable_001 TP_CMD 'sleep 60'
 tmux set-option -p -t restartable_001 @pi_session_id $FORK_SID
 tmux set-option -p -t restartable_001 @pi_pid $fish_pid
 functions -c _tp_stop_pi __tp_real_stop_pi

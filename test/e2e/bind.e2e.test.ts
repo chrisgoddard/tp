@@ -42,7 +42,9 @@ test("window status shows blocked Pi state but leaves plain windows unchanged", 
 	server.start();
 	server.run(["new-session", "-d", "-s", "bind-test"]);
 	try {
-		const result = await runTp(["bind"], { env: { HOME: home } });
+		const result = await runTp(["bind"], {
+			env: { HOME: home, XDG_CONFIG_HOME: undefined },
+		});
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toEndWith("source-file ~/.config/tp/tmux.conf\n");
 		const path = join(home, ".config", "tp", "tmux.conf");

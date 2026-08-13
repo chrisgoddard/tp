@@ -232,7 +232,12 @@ test("SIGINT during watch restores terminal modes", async () => {
 				script,
 			]);
 			waitFor(() => existsSync(pidPath));
-			process.kill(Number(readFileSync(pidPath, "utf8")), "SIGINT");
+			const watcherPid = Number(readFileSync(pidPath, "utf8"));
+			try {
+				process.kill(watcherPid, "SIGINT");
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+			}
 			waitFor(
 				() =>
 					server.run(["has-session", "-t", "=sigint-watcher"], true)

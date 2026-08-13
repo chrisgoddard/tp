@@ -85,6 +85,19 @@ async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
 	}
 }
 
+async function waitForText(
+	path: string,
+	text: string,
+	timeoutMs = 5_000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!exists(path) || !readFileSync(path, "utf8").includes(text)) {
+		if (Date.now() >= deadline)
+			throw new Error(`timed out waiting for ${text} in ${path}`);
+		await Bun.sleep(10);
+	}
+}
+
 test("async reserves the clipboard before starting transport", async () => {
 	const kit = createStubKit();
 	try {
@@ -168,7 +181,7 @@ test("detached async worker survives parent kill and publishes its upload", asyn
 		expect(uploadLog).toContain("&& mv");
 		expect(readFileSync(reservedPath, "utf8")).toBe("snapshot-before-kill");
 		const id = filename.slice("tp-shot-".length).split(".")[0];
-		expect(readFileSync(join(logs, `${id}.log`), "utf8")).toContain("Ready:");
+		await waitForText(join(logs, `${id}.log`), "Ready:");
 		await child.exited;
 	} finally {
 		kit.cleanup();
