@@ -28,6 +28,12 @@ function tmuxCommand(server: ScratchTmuxServer, args: string[]) {
 	return server.run(args, true);
 }
 
+function ptyCommand(logPath: string, command: string): string[] {
+	return process.platform === "darwin"
+		? ["/usr/bin/script", "-q", logPath, "/bin/sh", "-c", command]
+		: ["/usr/bin/script", "-qefc", command, logPath];
+}
+
 const ORIGIN_WAIT_ATTEMPTS = 400;
 
 function waitForOrigin(predicate: () => boolean): void {
@@ -64,18 +70,29 @@ function writeInsideRunner(
 	const root = mkdtempSync(join(server.root, "origin-runner-"));
 	const resultPath = join(root, "result.json");
 	const runner = join(root, "runner.ts");
+	const runnerPath =
+		options.path ??
+		(process.platform === "darwin"
+			? (process.env.PATH ?? "")
+			: "/usr/bin:/bin");
+	const platformRunnerPath =
+		process.platform === "darwin"
+			? `${runnerPath}:${process.env.PATH ?? ""}`
+			: runnerPath;
+	const tmuxPath = Bun.which("tmux") ?? "tmux";
 	const source = `import { writeFileSync } from "node:fs";
 const socket = process.env.TP_TMUX_SOCKET!;
 const resultPath = process.env.TP_ORIGIN_RESULT!;
-const tmux = (args: string[]) => Bun.spawnSync({ cmd: ["tmux", "-L", socket, "-f", "/dev/null", ...args], stdout: "pipe", stderr: "pipe" });
+const pane = process.env.TMUX_PANE!;
+const tmux = (args: string[]) => Bun.spawnSync({ cmd: [${JSON.stringify(tmuxPath)}, "-L", socket, "-f", "/dev/null", ...args], stdout: "pipe", stderr: "pipe" });
 let tty = "";
 for (let i = 0; i < 400 && !tty; i++) {
-  tty = new TextDecoder().decode(tmux(["display-message", "-p", "#{client_tty}"]).stdout).trim();
+  tty = new TextDecoder().decode(tmux(["display-message", "-p", "-t", pane, "#{client_tty}"]).stdout).trim();
   if (!tty) await Bun.sleep(25);
 }
 const option = "@tp_ssh_source_" + tty.trim().replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 tmux(["set-option", "-gq", option, ${JSON.stringify(options.mapping)}]);
-const child = Bun.spawn([process.execPath, ${JSON.stringify(tpEntry)}, "origin"${options.json ? ', "--json"' : ""}], { stdout: "pipe", stderr: "pipe", env: { ...process.env, PATH: ${JSON.stringify(options.path ?? "")} } });
+const child = Bun.spawn([process.execPath, ${JSON.stringify(tpEntry)}, "origin"${options.json ? ', "--json"' : ""}], { stdout: "pipe", stderr: "pipe", env: { ...process.env, PATH: ${JSON.stringify(platformRunnerPath)} } });
 const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
 writeFileSync(resultPath, JSON.stringify({ stdout, stderr, exitCode }));
 tmux(["detach-client"]);
@@ -90,6 +107,10 @@ async function attachAndRead(
 	runner: { root: string; resultPath: string; runner: string },
 	path?: string,
 ): Promise<OriginResult> {
+	const runnerPath =
+		path && process.platform === "darwin"
+			? `${path}:${process.env.PATH ?? ""}`
+			: path;
 	runNewSession(server, [
 		"new-session",
 		"-d",
@@ -99,14 +120,14 @@ async function attachAndRead(
 		`TP_TMUX_SOCKET=${server.socket}`,
 		"-e",
 		`TP_ORIGIN_RESULT=${runner.resultPath}`,
-		...(path ? ["-e", `PATH=${path}`] : []),
+		...(runnerPath ? ["-e", `PATH=${runnerPath}`] : []),
 		"--",
 		process.execPath,
 		runner.runner,
 	]);
 	const log = join(runner.root, "attach.log");
 	const command = `TERM=xterm tmux -L ${server.socket} -f /dev/null attach-session -t =${session}-runner`;
-	const child = Bun.spawn(["/usr/bin/script", "-qefc", command, log], {
+	const child = Bun.spawn(ptyCommand(log, command), {
 		cwd: repoRoot,
 		env: {
 			...process.env,
@@ -175,11 +196,12 @@ async function outsideAttach(
 		`exec env -u TMUX -u TMUX_PANE TP_TMUX_SOCKET=${shellQuote(server.socket)} ${sshPrefix} ${shellQuote(process.execPath)} ${shellQuote(tpEntry)} 1`,
 	].join("; ");
 	const env = { ...process.env, ...server.env };
+	env.TERM = "xterm";
 	env.TMUX = undefined;
 	env.TMUX_PANE = undefined;
 	if (sshConnection === undefined) env.SSH_CONNECTION = undefined;
 	else env.SSH_CONNECTION = sshConnection;
-	const child = Bun.spawn(["/usr/bin/script", "-qefc", command, logPath], {
+	const child = Bun.spawn(ptyCommand(logPath, command), {
 		cwd: server.root,
 		env,
 		stdout: "pipe",
@@ -294,7 +316,7 @@ test("tp origin reports tailscale absent with exit 1", async () => {
 	rmSync(join(kit.directory, "tailscale"));
 	writeFileSync(
 		join(kit.directory, "tmux"),
-		'#!/bin/sh\nexec /usr/bin/tmux "$@"\n',
+		`#!/bin/sh\nexec ${Bun.which("tmux") ?? "tmux"} "$@"\n`,
 	);
 	chmodSync(join(kit.directory, "tmux"), 0o755);
 	server.start();
@@ -390,15 +412,13 @@ async function directStamp(
 	const root = mkdtempSync(join(server.root, "stamp-runner-"));
 	const log = join(root, "script.log");
 	const child = Bun.spawn(
-		[
-			"script",
-			"-qefc",
-			`TERM=xterm tmux -L ${server.socket} -f /dev/null attach-session -t =${session}; sleep 1; tmux -L ${server.socket} -f /dev/null attach-session -t =${session}`,
+		ptyCommand(
 			log,
-		],
+			`TERM=xterm tmux -L ${server.socket} -f /dev/null attach-session -t =${session}; sleep 1; tmux -L ${server.socket} -f /dev/null attach-session -t =${session}`,
+		),
 		{
 			cwd: repoRoot,
-			env: { ...process.env, ...server.env },
+			env: { ...process.env, ...server.env, TERM: "xterm" },
 			stdout: "pipe",
 			stderr: "pipe",
 		},
