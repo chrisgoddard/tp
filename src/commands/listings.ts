@@ -1,14 +1,17 @@
 import { type CommandContext, registerCommandHandler } from "../lib/cli";
-import { resolveAttachedDevice, stampSshSource } from "../lib/origin";
 import {
-	type ColourName,
-	type Segment,
-	buildLine,
-	colorEnabled,
-	colorize,
-} from "../lib/output";
-import { PI_ID_LENGTH, type PiInfo, stateVisual } from "../lib/pi";
-import { formatNumber, parseSessionName, projectName } from "../lib/project";
+	type ParsedListingSession,
+	byProjectAndNumber,
+	byRecent,
+	formatDuration,
+	parseTpSession,
+	renderListingLine,
+	terminalWidth,
+} from "../lib/listing-render";
+import { resolveAttachedDevice, stampSshSource } from "../lib/origin";
+import { buildLine, colorEnabled } from "../lib/output";
+import { projectName } from "../lib/project";
+import { recordSessionsSnapshot } from "../lib/snapshot";
 import { type TmuxSession, attach, listSessions } from "../lib/tmux";
 import { restartSession } from "./pi-session";
 
@@ -25,12 +28,6 @@ const defaultDependencies: ListingDependencies = {
 	attach,
 	restart: restartSession,
 };
-
-interface ParsedListingSession {
-	session: TmuxSession;
-	project: string;
-	number: number;
-}
 
 interface JsonPi {
 	sessionId: string;
@@ -52,130 +49,6 @@ export interface ListingJsonRecord {
 	activityAt: string | null;
 	cwd: string | null;
 	pi: JsonPi | null;
-}
-
-function notImplemented(context: CommandContext): number {
-	context.stderr(`tp ${context.command.name}: not implemented yet`);
-	return 1;
-}
-
-function parseTpSession(
-	session: TmuxSession,
-): ParsedListingSession | undefined {
-	const parsed = parseSessionName(session.name);
-	if (!parsed) return undefined;
-	return { session, project: parsed.project, number: parsed.number };
-}
-
-function byProjectAndNumber(
-	left: ParsedListingSession,
-	right: ParsedListingSession,
-): number {
-	return (
-		left.project.localeCompare(right.project) || left.number - right.number
-	);
-}
-
-function byRecent(
-	left: ParsedListingSession,
-	right: ParsedListingSession,
-): number {
-	const leftTime = left.session.activityAt
-		? Date.parse(left.session.activityAt)
-		: Number.NEGATIVE_INFINITY;
-	const rightTime = right.session.activityAt
-		? Date.parse(right.session.activityAt)
-		: Number.NEGATIVE_INFINITY;
-	return rightTime - leftTime || byProjectAndNumber(left, right);
-}
-
-function terminalWidth(): number {
-	const configured = process.env.COLUMNS;
-	if (configured && /^\d+$/.test(configured)) return Number(configured);
-	const ttyWidth = process.stdout.columns;
-	return ttyWidth && ttyWidth > 0 ? ttyWidth : 1000;
-}
-
-function formatDuration(seconds: number): string {
-	if (seconds < 60) return `${seconds}s`;
-	if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-	if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-	return `${Math.floor(seconds / 86400)}d`;
-}
-
-function stateSegment(pi: PiInfo): Segment | undefined {
-	if (!pi.state) return undefined;
-	const visual = stateVisual(pi.state);
-	let text = `${visual.marker} ${pi.state}`;
-	if (pi.tool && (pi.state === "tool" || pi.state === "blocked"))
-		text += `:${pi.tool}`;
-	if (pi.stateSince !== undefined) {
-		const age = Math.floor(Date.now() / 1000) - pi.stateSince;
-		if (age >= 0) text += ` ${formatDuration(age)}`;
-	}
-	return { text: `· ${text}`, colour: visual.colour as ColourName };
-}
-
-function ctxSegment(pi: PiInfo): Segment | undefined {
-	if (pi.ctxPct === undefined) return undefined;
-	const colour: ColourName =
-		pi.ctxPct >= 85 ? "red" : pi.ctxPct >= 70 ? "yellow" : "brblack";
-	return { text: `· ${pi.ctxPct}%`, colour };
-}
-
-function modelSegment(pi: PiInfo): Segment | undefined {
-	return pi.model ? { text: `· ${pi.model}`, colour: "brblack" } : undefined;
-}
-
-function fixedPrefix(
-	item: ParsedListingSession,
-	kind: "project" | "global" | "all",
-	index: number | undefined,
-	attachedFrom: string | null,
-	enabled: boolean,
-): string {
-	const { session } = item;
-	let prefix: string;
-	if (kind === "project")
-		prefix = `  ${formatNumber(item.number)}  →  ${session.name}`;
-	else if (kind === "global")
-		prefix = `  ${String(index).padStart(2, " ")}  →  ${session.name}`;
-	else prefix = `  ${session.name}`;
-	if (session.label)
-		prefix += ` ${colorize(`[${session.label}]`, "green", enabled)}`;
-	if (session.pi)
-		prefix += ` ${colorize(`pi:${session.pi.displayId.slice(0, PI_ID_LENGTH)}`, "brblack", enabled)}`;
-	return prefix;
-}
-
-export function renderListingLine(
-	item: ParsedListingSession,
-	kind: "project" | "global" | "all",
-	index: number | undefined,
-	attachedFrom: string | null,
-	width = terminalWidth(),
-	enabled = colorEnabled(),
-): string {
-	let prefix = fixedPrefix(item, kind, index, attachedFrom, enabled);
-	if (item.session.attached) {
-		const attached = attachedFrom
-			? `(attached: ${attachedFrom})`
-			: "(attached)";
-		prefix += ` ${colorize(attached, "magenta", enabled)}`;
-	}
-	const fields: Segment[] = [];
-	if (item.session.pi) {
-		const pi = item.session.pi;
-		const state = stateSegment(pi);
-		if (state) {
-			fields.push(state);
-			const ctx = ctxSegment(pi);
-			if (ctx) fields.push(ctx);
-			const model = modelSegment(pi);
-			if (model) fields.push(model);
-		}
-	}
-	return buildLine([prefix, ...fields], width, enabled);
 }
 
 async function attachedDevices(
@@ -262,7 +135,13 @@ async function lsCommand(
 ): Promise<number> {
 	const json = context.args.options.json === true;
 	const project = projectName();
-	const items = listSessions()
+	const sessions = listSessions();
+	try {
+		recordSessionsSnapshot(sessions);
+	} catch {
+		context.stderr("Warning: failed to record session snapshot");
+	}
+	const items = sessions
 		.map(parseTpSession)
 		.filter(
 			(item): item is ParsedListingSession =>
@@ -322,7 +201,13 @@ async function globalCommand(
 ): Promise<number> {
 	const json = context.args.options.json === true;
 	const recent = context.args.options.recent === true;
-	let items = listSessions()
+	const sessions = listSessions();
+	try {
+		recordSessionsSnapshot(sessions);
+	} catch {
+		context.stderr("Warning: failed to record session snapshot");
+	}
+	let items = sessions
 		.map(parseTpSession)
 		.filter((item): item is ParsedListingSession => item !== undefined)
 		.sort(recent ? byRecent : byProjectAndNumber);
@@ -393,9 +278,15 @@ export function registerListingsCommands(): void {
 	registerCommandHandler("ls", lsCommand);
 	registerCommandHandler("global", globalCommand);
 	registerCommandHandler("all", allCommand);
-	for (const command of ["w", "b", "status"])
-		registerCommandHandler(command, notImplemented);
 }
 
 export const listingTestDependencies = defaultDependencies;
-export { formatDuration, selectGlobal };
+export {
+	byProjectAndNumber,
+	byRecent,
+	formatDuration,
+	parseTpSession,
+	renderListingLine,
+	selectGlobal,
+	terminalWidth,
+};

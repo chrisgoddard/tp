@@ -17,6 +17,7 @@ import {
 	projectName,
 	sessionName,
 } from "../lib/project";
+import { recordSessionsSnapshot } from "../lib/snapshot";
 import {
 	attach,
 	hasSession,
@@ -29,6 +30,14 @@ import {
 import { restartSession } from "./pi-session";
 
 const decoder = new TextDecoder();
+
+function recordSnapshot(): void {
+	try {
+		recordSessionsSnapshot(listSessions());
+	} catch {
+		console.error("Warning: failed to record session snapshot");
+	}
+}
 
 function shellQuote(value: string): string {
 	if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
@@ -178,6 +187,7 @@ function createSession(
 			// A short-lived command can remove its session before its label is set.
 		}
 	}
+	recordSnapshot();
 	return { name, outputPath };
 }
 
@@ -337,6 +347,7 @@ function killCommand(context: CommandContext): number {
 		}
 		killSession(target);
 		context.stderr(`Killed ${target}`);
+		recordSnapshot();
 		return 0;
 	}
 	const sessions = currentProjectSessions();
@@ -363,6 +374,7 @@ function killCommand(context: CommandContext): number {
 		killSession(session.name);
 		context.stderr(`Killed ${session.name}`);
 	}
+	recordSnapshot();
 	return 0;
 }
 
@@ -394,6 +406,7 @@ function nameCommand(context: CommandContext): number {
 		"#{?@tp_name,#T · #{@tp_name},#T}",
 	]);
 	context.stderr(`Named ${target} → ${label}`);
+	recordSnapshot();
 	return 0;
 }
 

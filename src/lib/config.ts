@@ -7,25 +7,62 @@ import { type Exit, fail } from "./exit";
 export interface ShotConfig {
 	host?: string;
 	remote_dir?: string;
+	taildrive_dir?: string;
 	notifier?: string;
 	transport: string;
 }
+
+export interface LayoutWindow {
+	name: string;
+	cmd?: string;
+	split?: "h" | "v";
+}
+
+export interface Layout {
+	windows: LayoutWindow[];
+}
+
+export type LayoutsConfig = Record<string, Layout>;
 
 export interface TpConfig {
 	shell: string;
 	color: string;
 	shot: ShotConfig;
-	layouts: Record<string, unknown>;
+	layouts: LayoutsConfig;
 }
 
 export type ConfigOverrides = Partial<Omit<TpConfig, "shot" | "layouts">> & {
 	shot?: Partial<ShotConfig>;
-	layouts?: Record<string, unknown>;
+	layouts?: LayoutsConfig;
 	shotHost?: string;
 	shotRemoteDir?: string;
 	shotNotifier?: string;
 	shotTransport?: string;
 };
+
+export function isLayoutWindow(value: unknown): value is LayoutWindow {
+	if (typeof value !== "object" || value === null || Array.isArray(value))
+		return false;
+	const window = value as Record<string, unknown>;
+	return (
+		typeof window.name === "string" &&
+		(window.cmd === undefined || typeof window.cmd === "string") &&
+		(window.split === undefined || window.split === "h" || window.split === "v")
+	);
+}
+
+export function isLayout(value: unknown): value is Layout {
+	if (typeof value !== "object" || value === null || Array.isArray(value))
+		return false;
+	const layout = value as Record<string, unknown>;
+	return Array.isArray(layout.windows) && layout.windows.every(isLayoutWindow);
+}
+
+export function isLayouts(value: unknown): value is LayoutsConfig {
+	if (typeof value !== "object" || value === null || Array.isArray(value))
+		return false;
+	return Object.values(value).every(isLayout);
+}
 
 export interface LoadConfigOptions {
 	flags?: ConfigOverrides;
@@ -88,7 +125,11 @@ function inspectKeys(
 	const shot = source.shot;
 	if (shot !== undefined) {
 		for (const key of Object.keys(record(shot))) {
-			if (!"host remote_dir notifier transport".split(" ").includes(key))
+			if (
+				!"host remote_dir taildrive_dir notifier transport"
+					.split(" ")
+					.includes(key)
+			)
 				warnUnknown(`shot.${key}`, warn);
 		}
 	}
@@ -102,10 +143,11 @@ function fromSource(source: Record<string, unknown>): ConfigOverrides {
 		shot: {
 			host: stringValue(shot.host, undefined),
 			remote_dir: stringValue(shot.remote_dir, undefined),
+			taildrive_dir: stringValue(shot.taildrive_dir, undefined),
 			notifier: stringValue(shot.notifier, undefined),
 			transport: stringValue(shot.transport, undefined),
 		},
-		layouts: record(source.layouts),
+		layouts: record(source.layouts) as LayoutsConfig,
 	};
 }
 
@@ -116,6 +158,8 @@ function apply(config: TpConfig, overrides: ConfigOverrides): void {
 	if (shot) {
 		if (shot.host !== undefined) config.shot.host = shot.host;
 		if (shot.remote_dir !== undefined) config.shot.remote_dir = shot.remote_dir;
+		if (shot.taildrive_dir !== undefined)
+			config.shot.taildrive_dir = shot.taildrive_dir;
 		if (shot.notifier !== undefined) config.shot.notifier = shot.notifier;
 		if (shot.transport !== undefined) config.shot.transport = shot.transport;
 	}

@@ -5,7 +5,7 @@ function notImplemented(context: CommandContext): number {
 	return 1;
 }
 
-export function registerMiscCommands(): void {
-	for (const command of ["doctor", "update", "bind", "pop", "restore"])
+export function registerWatchStatusCommands(): void {
+	for (const command of ["w", "b", "status"])
 		registerCommandHandler(command, notImplemented);
 }
