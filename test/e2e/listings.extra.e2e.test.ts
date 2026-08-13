@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
+import { basename } from "node:path";
 import { assertListingSchema } from "./fixtures/listings-json-schema";
 import { ScratchTmuxServer, runTp } from "./harness";
+
+const project = basename(process.cwd()).replace(/^\.+/, "");
 
 async function withServer(
 	callback: (server: ScratchTmuxServer) => Promise<void> | void,
@@ -34,8 +37,8 @@ test("--recent orders by tmux session_activity descending", async () => {
 
 test("listing rendering breakpoints drop rightmost fields", async () => {
 	await withServer(async (server) => {
-		create(server, "v02-listings_001");
-		const pane = "v02-listings_001:0.0";
+		create(server, `${project}_001`);
+		const pane = `${project}_001:0.0`;
 		for (const [option, value] of [
 			["@pi_session_id", "breakpoint-id"],
 			["@pi_pid", String(process.pid)],
@@ -62,7 +65,7 @@ test("listing rendering breakpoints drop rightmost fields", async () => {
 
 test("NO_COLOR wins over TP_COLOR=always", async () => {
 	await withServer(async (server) => {
-		create(server, "v02-listings_001");
+		create(server, `${project}_001`);
 		const result = await runTp(["ls"], {
 			env: { ...server.env, NO_COLOR: "1", TP_COLOR: "always" },
 		});
@@ -72,7 +75,7 @@ test("NO_COLOR wins over TP_COLOR=always", async () => {
 
 test("piped listing output has no ANSI by default", async () => {
 	await withServer(async (server) => {
-		create(server, "v02-listings_001");
+		create(server, `${project}_001`);
 		const result = await runTp(["ls"], { env: server.env });
 		expect(result.stdout).not.toContain("\u001b[");
 	});
@@ -80,7 +83,7 @@ test("piped listing output has no ANSI by default", async () => {
 
 test("--json round-trips against the checked-in schema fixture", async () => {
 	await withServer(async (server) => {
-		create(server, "v02-listings_001");
+		create(server, `${project}_001`);
 		const result = await runTp(["ls", "--json"], { env: server.env });
 		expect(result.exitCode).toBe(0);
 		const parsed: unknown = JSON.parse(result.stdout);

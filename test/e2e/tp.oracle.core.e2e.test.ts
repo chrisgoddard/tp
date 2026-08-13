@@ -263,10 +263,73 @@ test("tp kill removes all current-project sessions", async () => {
 	);
 });
 
-// These resolution-path specs remain todo until src/bin/tp.ts dispatches the
-// non-command Resolution variants into core.ts.
-test.todo("bare tp dispatches to the first project session", () => {});
-test.todo("tp <n> dispatches to attachProjectNumber", () => {});
-test.todo("tp <n> --restart dispatches restartSession", () => {});
-test.todo("tp <label> dispatches to attachProjectLabel", () => {});
-test.todo("ambiguous labels remain usage errors", () => {});
+test("bare tp dispatches to the first project session", async () => {
+	await runTpCase(
+		[],
+		{ exitCode: 1 },
+		{
+			setup: (server) => seedSession(server, 1),
+			env: { TMUX: "1", TMUX_PANE: undefined },
+		},
+	);
+});
+
+test("tp <n> dispatches to attachProjectNumber", async () => {
+	await runTpCase(
+		["2"],
+		{ exitCode: 1 },
+		{
+			setup: (server) => seedSession(server, 2),
+			env: { TMUX: "1", TMUX_PANE: undefined },
+		},
+	);
+});
+
+test("tp <n> --restart dispatches restartSession", async () => {
+	await runTpCase(
+		["2", "--restart"],
+		{ exitCode: 1 },
+		{ setup: (server) => seedSession(server, 2) },
+	);
+});
+
+test("tp <label> dispatches to attachProjectLabel", async () => {
+	await runTpCase(
+		["backend"],
+		{ exitCode: 1 },
+		{
+			setup: (server) => {
+				seedSession(server, 2);
+				server.run([
+					"set-option",
+					"-t",
+					`${basename(repoRoot)}_002`,
+					"@tp_name",
+					"backend",
+				]);
+			},
+			env: { TMUX: "1", TMUX_PANE: undefined },
+		},
+	);
+});
+
+test("ambiguous labels remain usage errors", async () => {
+	await runTpCase(
+		["back"],
+		{ exitCode: 2, stderrIncludes: "Ambiguous session label 'back'" },
+		{
+			setup: (server) => {
+				seedSession(server, 1);
+				seedSession(server, 2);
+				for (const number of [1, 2])
+					server.run([
+						"set-option",
+						"-t",
+						`${basename(repoRoot)}_${String(number).padStart(3, "0")}`,
+						"@tp_name",
+						`backend-${number}`,
+					]);
+			},
+		},
+	);
+});

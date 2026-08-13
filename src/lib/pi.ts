@@ -102,7 +102,12 @@ export function decodePaneOptions(
 	const rawId = option(options, "sessionId", "@pi_session_id");
 	if (typeof rawId !== "string" || !rawId.trim()) return null;
 	const rawPid = option(options, "pid", "@pi_pid");
-	if (rawPid === undefined || !alive(rawPid as string | number)) return null;
+	if (
+		rawPid !== undefined &&
+		String(rawPid).trim() !== "" &&
+		!alive(rawPid as string | number)
+	)
+		return null;
 
 	const pid = optionalNumber(rawPid);
 	const state = mapPiState(

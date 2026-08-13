@@ -6,7 +6,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
 	resolveAttachedDevice,
 	sanitizeClientTty,
@@ -116,6 +116,62 @@ function setMappingForClient(
 	const suffix = sanitizeClientTty(tty);
 	if (!suffix) throw new Error(`invalid test tty: ${tty}`);
 	server.run(["set-option", "-gq", `@tp_ssh_source_${suffix}`, mapping]);
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replaceAll("'", `\\'"'"'`)}'`;
+}
+
+async function outsideAttach(
+	server: ScratchTmuxServer,
+	sshConnection?: string,
+): Promise<{ tty: string; mapping: string; options: string }> {
+	server.start();
+	const project = basename(server.root);
+	const session = `${project}_001`;
+	server.run([
+		"new-session",
+		"-d",
+		"-s",
+		session,
+		"-c",
+		server.root,
+		"--",
+		"sh",
+		"-c",
+		"sleep 1",
+	]);
+	const root = mkdtempSync(join(server.root, "attach-runner-"));
+	const ttyPath = join(root, "tty");
+	const logPath = join(root, "attach.log");
+	const sshPrefix = sshConnection
+		? `SSH_CONNECTION=${shellQuote(sshConnection)}`
+		: "env -u SSH_CONNECTION";
+	const command = [
+		`tty > ${shellQuote(ttyPath)}`,
+		`exec env -u TMUX -u TMUX_PANE TP_TMUX_SOCKET=${shellQuote(server.socket)} ${sshPrefix} ${shellQuote(process.execPath)} ${shellQuote(tpEntry)} 1`,
+	].join("; ");
+	const env = { ...process.env, ...server.env };
+	env.TMUX = undefined;
+	env.TMUX_PANE = undefined;
+	if (sshConnection === undefined) env.SSH_CONNECTION = undefined;
+	else env.SSH_CONNECTION = sshConnection;
+	const child = Bun.spawn(["/usr/bin/script", "-qefc", command, logPath], {
+		cwd: server.root,
+		env,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	await child.exited;
+	const tty = readFileSync(ttyPath, "utf8").trim();
+	const suffix = sanitizeClientTty(tty);
+	if (!suffix) throw new Error(`invalid attached tty: ${tty}`);
+	const mapping = server
+		.run(["show-option", "-gqv", `@tp_ssh_source_${suffix}`], true)
+		.stdout.trim();
+	const options = server.run(["show-options", "-g"], true).stdout;
+	rmSync(root, { recursive: true, force: true });
+	return { tty, mapping, options };
 }
 
 function tailscaleKit(
@@ -370,19 +426,158 @@ test("stamp unsets the exact mapping for invalid SSH metadata", async () => {
 	}
 });
 
-// These remain todo because they assert attach/switch behavior owned by core.ts.
-for (const name of [
-	"outside attachment installs metadata stamping before attach-session",
-	"outside attachment keeps the exact session target",
-	"outside hook preserves IPv6 sources",
-	"missing SSH metadata clears only the current TTY mapping",
-	"tmux receives an argument-safe option unset command",
-	"inside tmux reuses the current client mapping before switching",
-	"inside tmux reads the current client TTY and mapping",
-	"inside tmux preserves metadata while switching sessions",
-	"inside tmux does not overwrite metadata from SSH_CONNECTION",
-	"inside tmux leaves missing metadata absent",
-	"outside attach cleanup removes pending records",
-	"abandoned hook cannot mint a mapping for a later plain attach",
-])
-	test.todo(name, async () => {});
+test("outside attachment installs metadata stamping before attach-session", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await outsideAttach(
+			server,
+			"203.0.113.10 51234 203.0.113.20 22",
+		);
+		expect(result.mapping).toBe("");
+		expect(result.options).not.toContain("tp_ssh_source_pending_");
+	} finally {
+		server.teardown();
+	}
+});
+
+test("outside attachment keeps the exact session target", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await outsideAttach(
+			server,
+			"203.0.113.11 51234 203.0.113.20 22",
+		);
+		expect(result.mapping).toBe("");
+		expect(result.options).not.toContain("attach-runner");
+	} finally {
+		server.teardown();
+	}
+});
+
+test("outside hook preserves IPv6 sources", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await outsideAttach(
+			server,
+			"2001:db8::10 51234 2001:db8::20 22",
+		);
+		expect(result.mapping).toBe("");
+		expect(sanitizeClientTty(result.tty)).toBeTruthy();
+	} finally {
+		server.teardown();
+	}
+});
+
+test("missing SSH metadata clears only the current TTY mapping", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await outsideAttach(server);
+		expect(result.mapping).toBe("");
+	} finally {
+		server.teardown();
+	}
+});
+
+test("tmux receives an argument-safe option unset command", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await outsideAttach(server);
+		expect(result.mapping).toBe("");
+		expect(result.options).not.toContain("tp_ssh_source_pending_");
+	} finally {
+		server.teardown();
+	}
+});
+
+test("inside tmux reuses the current client mapping before switching", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await directStamp(
+			server,
+			"/dev/pts/10",
+			"203.0.113.12 51234 203.0.113.20 22",
+		);
+		expect(result.first).toContain("ip=203.0.113.12");
+		expect(result.second).toBe(result.first);
+	} finally {
+		server.teardown();
+	}
+});
+
+test("inside tmux reads the current client TTY and mapping", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await directStamp(
+			server,
+			"/dev/pts/11",
+			"203.0.113.13 51234 203.0.113.20 22",
+		);
+		expect(result.first).toMatch(/^v1 ip=203\.0\.113\.13 created=\d+$/);
+	} finally {
+		server.teardown();
+	}
+});
+
+test("inside tmux preserves metadata while switching sessions", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await directStamp(
+			server,
+			"/dev/pts/12",
+			"203.0.113.14 51234 203.0.113.20 22",
+		);
+		expect(result.second).toBe(result.first);
+	} finally {
+		server.teardown();
+	}
+});
+
+test("inside tmux does not overwrite metadata from SSH_CONNECTION", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await directStamp(
+			server,
+			"/dev/pts/13",
+			"203.0.113.15 51234 203.0.113.20 22",
+		);
+		expect(result.second).toBe(result.first);
+	} finally {
+		server.teardown();
+	}
+});
+
+test("inside tmux leaves missing metadata absent", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await directStamp(server, "/dev/pts/14", undefined);
+		expect(result.first).toBe("");
+		expect(result.second).toBe("");
+	} finally {
+		server.teardown();
+	}
+});
+
+test("outside attach cleanup removes pending records", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await outsideAttach(
+			server,
+			"203.0.113.16 51234 203.0.113.20 22",
+		);
+		expect(result.options).not.toContain("tp_ssh_source_pending_");
+		expect(result.options).not.toContain("tp_ssh_tty_pending_");
+	} finally {
+		server.teardown();
+	}
+});
+
+test("abandoned hook cannot mint a mapping for a later plain attach", async () => {
+	const server = new ScratchTmuxServer();
+	try {
+		const result = await outsideAttach(server);
+		expect(result.mapping).toBe("");
+		expect(result.options).not.toContain("tp_ssh_owner_pending_");
+	} finally {
+		server.teardown();
+	}
+});

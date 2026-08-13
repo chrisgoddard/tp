@@ -54,6 +54,7 @@ function currentProjectSessions(): ReturnType<typeof listSessions> {
 function clientTty(): string {
 	const result = Bun.spawnSync({
 		cmd: ["tty"],
+		stdin: "inherit",
 		stdout: "pipe",
 		stderr: "ignore",
 	});

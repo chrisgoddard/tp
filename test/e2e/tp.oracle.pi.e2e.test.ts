@@ -298,10 +298,43 @@ test("restart refuses an id without a saved file without killing Pi", () => {
 	}
 });
 
-// These command-routing cases belong to the concurrent core/listings lanes.
-test.todo("tp <n> --restart routes through restartSession", async () => {
-	await runTp(["2", "--restart"]);
+test("tp <n> --restart routes through restartSession", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	const project = basename(server.root);
+	const name = `${project}_002`;
+	server.run(["new-session", "-d", "-s", name]);
+	try {
+		const result = await runTp(["2", "--restart"], {
+			cwd: server.root,
+			env: server.env,
+		});
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toBe("");
+		expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
+			0,
+		);
+	} finally {
+		server.teardown();
+	}
 });
-test.todo("tp global <i> --restart routes through restartSession", async () => {
-	await runTp(["global", "1", "--restart"]);
+test("tp global <i> --restart routes through restartSession", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	const project = basename(server.root);
+	const name = `${project}_001`;
+	server.run(["new-session", "-d", "-s", name]);
+	try {
+		const result = await runTp(["global", "1", "--restart"], {
+			cwd: server.root,
+			env: server.env,
+		});
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toBe("");
+		expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
+			0,
+		);
+	} finally {
+		server.teardown();
+	}
 });

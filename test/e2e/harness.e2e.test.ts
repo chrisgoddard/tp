@@ -21,7 +21,7 @@ afterAll(() => {
 });
 
 test("runTp and runTpShot capture each stream and exit code", async () => {
-	const tp = await runTp();
+	const tp = await runTp(["--version"]);
 	expect(tp).toEqual({ stdout: "tp 0.2.0\n", stderr: "", exitCode: 0 });
 	const shot = await runTpShot();
 	expect(shot).toEqual({ stdout: "tp-shot 0.2.0\n", stderr: "", exitCode: 0 });

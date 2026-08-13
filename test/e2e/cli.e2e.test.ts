@@ -8,6 +8,7 @@ const socket = `tp-cli-${process.pid}`;
 const project = basename(process.cwd()).replace(/^\.+/, "");
 const scratch = mkdtempSync(join(tmpdir(), "tp-cli-e2e-"));
 const wrapper = join(scratch, "tp");
+const fakePi = join(scratch, "pi");
 
 function hasBinary(name: string): boolean {
 	return Bun.which(name) !== null;
@@ -42,6 +43,8 @@ async function runTp(
 beforeAll(() => {
 	writeFileSync(wrapper, `#!/bin/sh\nexec ${process.execPath} ${bin} "$@"\n`);
 	chmodSync(wrapper, 0o755);
+	writeFileSync(fakePi, "#!/bin/sh\nprintf 'fake pi\\n'\n");
+	chmodSync(fakePi, 0o755);
 	tmux(["new-session", "-d", "-s", `${project}_001`, "-c", process.cwd()]);
 	tmux(["set-option", "-t", `${project}_001`, "@tp_name", "api"]);
 });
@@ -63,18 +66,23 @@ test("__complete lists commands and live project sessions", async () => {
 	expect(sessions.stdout).toContain("api\t");
 });
 
-test("help and version use stdout while unimplemented commands fail", async () => {
+test("help and version use stdout while core commands dispatch", async () => {
 	await expect(runTp(["version"])).resolves.toMatchObject({
 		code: 0,
 		stdout: "tp 0.2.0\n",
 		stderr: "",
 	});
 	await expect(
-		runTp(["pi", "--", "--model", "model with spaces"]),
+		runTp(["pi", "--", "--model", "model with spaces"], {
+			PATH: `${scratch}:${process.env.PATH ?? ""}`,
+			TP_SHELL: "/bin/sh",
+			TMUX: "",
+			TMUX_PANE: "",
+		}),
 	).resolves.toMatchObject({
-		code: 1,
-		stdout: "",
-		stderr: "tp pi: not implemented yet\n",
+		code: 0,
+		stdout: expect.stringContaining("fake pi"),
+		stderr: "",
 	});
 });
 

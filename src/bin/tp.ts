@@ -1,5 +1,10 @@
 #!/usr/bin/env bun
 
+import {
+	attachFirstProjectSession,
+	attachProjectLabel,
+	attachProjectNumber,
+} from "../commands/core";
 import { registerCommands } from "../commands/register";
 import {
 	CliUsageError,
@@ -7,6 +12,7 @@ import {
 	type CommandSpec,
 	type ParsedArgs,
 	type Resolution,
+	getCommand,
 	parseCommandArgs,
 	renderHelp,
 	resolveInvocation,
@@ -38,6 +44,27 @@ function makeContext(
 	};
 }
 
+function syntheticContext(
+	commandName: string,
+	resolution: Resolution,
+	argv: readonly string[],
+): CommandContext {
+	const command = getCommand(commandName);
+	if (!command) throw new Error(`Unknown synthetic command '${commandName}'`);
+	return makeContext(
+		command,
+		{
+			options: {},
+			positionals: [],
+			passthrough: [],
+			help: false,
+			delimited: false,
+		},
+		resolution,
+		argv,
+	);
+}
+
 function completeProtocol(raw: readonly string[]): number {
 	try {
 		const shell = raw[1];
@@ -55,11 +82,6 @@ export async function run(
 	argv: readonly string[] = process.argv.slice(2),
 ): Promise<number> {
 	if (argv[0] === "__complete") return completeProtocol(argv);
-	if (argv.length === 0) {
-		// Preserve the scaffold's no-argument probe until the attach command lands.
-		process.stdout.write(`tp ${VERSION}\n`);
-		return 0;
-	}
 	if (argv.length === 1 && (argv[0] === "-h" || argv[0] === "--help")) {
 		process.stdout.write(renderHelp());
 		return 0;
@@ -69,11 +91,41 @@ export async function run(
 		return 0;
 	}
 	try {
+		if (argv.length === 0) {
+			const command = getCommand("last");
+			if (!command) throw new Error("Unknown synthetic command 'last'");
+			const resolution: Resolution = {
+				kind: "command",
+				command,
+				token: "",
+			};
+			return await attachFirstProjectSession(
+				syntheticContext("last", resolution, argv),
+			);
+		}
 		const invocation = resolveInvocation(argv);
 		if (!invocation.resolution) throw new CliUsageError("Missing command");
+		if (invocation.resolution.kind === "number") {
+			const rest = invocation.rest;
+			if (rest.length > 1 || (rest.length === 1 && rest[0] !== "--restart"))
+				throw new CliUsageError("Usage: tp <n> [--restart]");
+			return await attachProjectNumber(
+				invocation.resolution.number,
+				syntheticContext("last", invocation.resolution, argv),
+				rest[0] === "--restart",
+			);
+		}
+		if (invocation.resolution.kind === "label") {
+			if (invocation.rest.length) throw new CliUsageError("Usage: tp <label>");
+			return await attachProjectLabel(
+				invocation.resolution.session.name,
+				syntheticContext("last", invocation.resolution, argv),
+			);
+		}
 		if (!invocation.command) {
-			process.stderr.write(`tp ${argv[0]}: not implemented yet\n`);
-			return 1;
+			return await attachFirstProjectSession(
+				syntheticContext("last", invocation.resolution, argv),
+			);
 		}
 		const { command, resolution } = invocation;
 		const args = parseCommandArgs(command, invocation.rest);

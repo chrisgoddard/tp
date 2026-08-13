@@ -190,8 +190,55 @@ test("tp new replays final output to the caller stdout", async () => {
 	expect(result.stdout).toContain("done");
 });
 
-// Label attachment is intentionally held until the dispatcher forwards
-// Resolution.kind === "label" into attachProjectLabel in core.ts.
-test.todo("label attach: unique label", () => {});
-test.todo("label attach: ambiguous prefix", () => {});
-test.todo("label attach: subcommand shadow remains unreachable", () => {});
+test("label attach: unique label", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	try {
+		const name = projectSession(server, 1);
+		server.run(["set-option", "-t", name, "@tp_name", "backend"]);
+		const result = await runTp(["backend"], { env: server.env });
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).not.toContain("Unknown command");
+	} finally {
+		server.teardown();
+	}
+});
+
+test("label attach: ambiguous prefix", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	try {
+		for (const [number, label] of [
+			[1, "backend-api"],
+			[2, "backend-web"],
+		] as const) {
+			const name = projectSession(server, number);
+			server.run(["set-option", "-t", name, "@tp_name", label]);
+		}
+		const result = await runTp(["backend"], { env: server.env });
+		expect(result.exitCode).toBe(2);
+		expect(result.stderr).toContain("Ambiguous session label 'backend'");
+	} finally {
+		server.teardown();
+	}
+});
+
+test("label attach: subcommand shadow remains unreachable", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	try {
+		const labeled = projectSession(server, 1);
+		server.run(["set-option", "-t", labeled, "@tp_name", "pi"]);
+		const result = await runTp(["pi", "--help"], { env: server.env });
+		expect(result.exitCode).toBe(0);
+		expect(
+			server.run(["has-session", "-t", `=${labeled}`], true).exitCode,
+		).toBe(0);
+		expect(
+			server.run(["has-session", "-t", `=${basename(repoRoot)}_002`], true)
+				.exitCode,
+		).not.toBe(0);
+	} finally {
+		server.teardown();
+	}
+});

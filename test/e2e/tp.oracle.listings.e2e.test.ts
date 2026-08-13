@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { ScratchTmuxServer, runTp, waitFor } from "./harness";
 
 const project = basename(process.cwd());
+const SESSION_ID = "019ff650-ac6d-7641-bb90-4475b973cc82";
 
 async function withServer(
 	callback: (server: ScratchTmuxServer) => Promise<void> | void,
@@ -171,9 +172,13 @@ test("a live process owned by another user still counts as live", async () => {
 		expect(result.stdout).toContain("pi:019ff650-ac6d");
 	});
 });
-// Out-of-scope src/lib/pi.ts intentionally treats an id without a pid as not live.
-test.todo("an id published without a pid is still shown", async () => {
-	// Out-of-scope src/lib/pi.ts requires @pi_pid for a live identity.
+test("an id published without a pid is still shown", async () => {
+	await withServer(async (server) => {
+		create(server, `${project}_001`);
+		setPaneOption(server, `${project}_001`, "@pi_session_id", SESSION_ID);
+		const result = await listing(server);
+		expect(result.stdout).toContain("pi:019ff650-ac6d");
+	});
 });
 test("tp ls shows the label and Pi session id together", async () => {
 	await withServer(async (server) => {

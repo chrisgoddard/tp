@@ -159,6 +159,12 @@ describe("Pi metadata", () => {
 			state: "tool",
 			ctxPct: 85,
 		});
+		expect(
+			decodePaneOptions({ sessionId: "published-without-pid" }, () => false),
+		).toMatchObject({
+			sessionId: "published-without-pid",
+			displayId: "published-wit",
+		});
 		expect(truncatePiId(options.sessionId)).toHaveLength(13);
 	});
 });
