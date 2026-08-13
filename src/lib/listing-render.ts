@@ -69,18 +69,24 @@ function stateSegment(pi: PiInfo): Segment | undefined {
 		const age = Math.floor(Date.now() / 1000) - pi.stateSince;
 		if (age >= 0) text += ` ${formatDuration(age)}`;
 	}
-	return { text: `· ${text}`, colour: visual.colour as ColourName };
+	return {
+		text,
+		colour: visual.colour as ColourName,
+		separator: "· ",
+	};
 }
 
 function ctxSegment(pi: PiInfo): Segment | undefined {
 	if (pi.ctxPct === undefined) return undefined;
 	const colour: ColourName =
 		pi.ctxPct >= 85 ? "red" : pi.ctxPct >= 70 ? "yellow" : "brblack";
-	return { text: `· ${pi.ctxPct}%`, colour };
+	return { text: `${pi.ctxPct}%`, colour, separator: "· " };
 }
 
 function modelSegment(pi: PiInfo): Segment | undefined {
-	return pi.model ? { text: `· ${pi.model}`, colour: "brblack" } : undefined;
+	return pi.model
+		? { text: pi.model, colour: "brblack", separator: "· " }
+		: undefined;
 }
 
 function fixedPrefix(

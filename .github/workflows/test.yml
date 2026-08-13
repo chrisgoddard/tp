@@ -44,3 +44,5 @@ jobs:
         run: bun run check
       - name: Run end-to-end tests
         run: bun run test:e2e
+      - name: Run differential parity tests
+        run: bun run test:parity

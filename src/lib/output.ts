@@ -18,6 +18,7 @@ export interface ColourOptions {
 export interface Segment {
 	text: string;
 	colour?: ColourName;
+	separator?: string;
 }
 
 const ANSI: Record<ColourName, string> = {
@@ -28,7 +29,7 @@ const ANSI: Record<ColourName, string> = {
 	green: "\u001b[32m",
 	magenta: "\u001b[35m",
 	red: "\u001b[31m",
-	normal: "\u001b[0m",
+	normal: "\u001b[m",
 };
 function requestedColour(value: string | undefined): ColourMode | undefined {
 	const requested = value?.toLowerCase();
@@ -116,7 +117,8 @@ export function renderSegment(
 ): string {
 	if (typeof segment === "string")
 		return enabled ? segment : stripAnsi(segment);
-	return colorize(segment.text, segment.colour, enabled);
+	const separator = segment.separator ?? "";
+	return `${separator}${colorize(segment.text, segment.colour, enabled)}`;
 }
 
 /** Build a line, discarding the least important (rightmost) fields first. */
