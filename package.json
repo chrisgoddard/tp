@@ -1,0 +1,25 @@
+{
+	"name": "@chrisgoddard/tp",
+	"version": "0.2.0",
+	"description": "A project-oriented tmux session manager",
+	"private": true,
+	"bin": {
+		"tp": "src/bin/tp.ts",
+		"tp-shot": "src/bin/tp-shot.ts"
+	},
+	"engines": {
+		"bun": ">=1.1.0"
+	},
+	"scripts": {
+		"test": "bun test test/unit",
+		"test:e2e": "bun test test/e2e",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"check": "bun run typecheck && bun run lint && bun run test"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"bun-types": "^1.3.14",
+		"typescript": "^5.7.2"
+	}
+}
