@@ -32,21 +32,23 @@ async function runTpWithTty(
 	env: Record<string, string | undefined>,
 	input: string,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const command = [process.execPath, join(repoRoot, "src/bin/tp.ts"), ...args]
-		.map(shellQuote)
-		.join(" ");
-	const child = Bun.spawn(["script", "-qefc", command, "/dev/null"], {
-		cwd: repoRoot,
-		env: mergedEnvironment({ ...env, TMUX: undefined, TMUX_PANE: undefined }),
-		stdin: "pipe",
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	child.stdin?.write(input);
-	child.stdin?.end();
-	const stdout = await new Response(child.stdout).text();
-	const stderr = await new Response(child.stderr).text();
-	return { stdout, stderr, exitCode: await child.exited };
+	const output: Uint8Array[] = [];
+	const child = Bun.spawn(
+		[process.execPath, join(repoRoot, "src/bin/tp.ts"), ...args],
+		{
+			cwd: repoRoot,
+			env: mergedEnvironment({ ...env, TMUX: undefined, TMUX_PANE: undefined }),
+			terminal: { data: (_terminal, data) => output.push(data) },
+		},
+	);
+	child.terminal?.write(`${input}\x04`);
+	const exitCode = await child.exited;
+	child.terminal?.close();
+	return {
+		stdout: new TextDecoder().decode(Buffer.concat(output)),
+		stderr: "",
+		exitCode,
+	};
 }
 
 function projectSession(server: ScratchTmuxServer, number: number): string {

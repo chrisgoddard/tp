@@ -115,7 +115,11 @@ function fileExists(path: string): boolean {
 async function main(): Promise<number> {
 	const args = process.argv.slice(2);
 	if (args[0] === "--worker") return runWorker(args[1] ?? "{}");
-	// Keep the scaffold's version probe useful on non-macOS development hosts.
+	if (args.length === 1 && (args[0] === "-V" || args[0] === "--version")) {
+		console.log("tp-shot 0.2.0");
+		return 0;
+	}
+	// Keep the no-argument probe useful on non-macOS development hosts.
 	// Real capture still takes the macOS-only path below.
 	if (
 		args.length === 0 &&

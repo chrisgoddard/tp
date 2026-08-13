@@ -20,7 +20,7 @@ test("both command stubs are runnable", async () => {
 		exitCode: 0,
 		output: "tp 0.2.0",
 	});
-	await expect(runBin("tp-shot.ts")).resolves.toEqual({
+	await expect(runBin("tp-shot.ts", ["--version"])).resolves.toEqual({
 		exitCode: 0,
 		output: "tp-shot 0.2.0",
 	});

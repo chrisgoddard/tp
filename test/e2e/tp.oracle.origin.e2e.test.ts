@@ -12,6 +12,7 @@ import {
 	sanitizeClientTty,
 	stampSshSource,
 } from "../../src/lib/origin";
+import { ptyCommand } from "./fixtures/pty";
 import { ScratchTmuxServer, createStubKit, waitFor } from "./harness";
 
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -26,12 +27,6 @@ type OriginResult = {
 
 function tmuxCommand(server: ScratchTmuxServer, args: string[]) {
 	return server.run(args, true);
-}
-
-function ptyCommand(logPath: string, command: string): string[] {
-	return process.platform === "darwin"
-		? ["/usr/bin/script", "-q", logPath, "/bin/sh", "-c", command]
-		: ["/usr/bin/script", "-qefc", command, logPath];
 }
 
 const ORIGIN_WAIT_ATTEMPTS = 400;
