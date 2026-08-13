@@ -1,139 +1,307 @@
 import { expect, test } from "bun:test";
-import { basename } from "node:path";
-import { ScratchTmuxServer, runTp } from "./harness";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import {
+	findPiSessionFile,
+	rebuildRestartCommand,
+	restartSession,
+} from "../../src/commands/pi-session";
+import { ScratchTmuxServer, runTp, waitFor } from "./harness";
 
-interface TpExpectation {
-	exitCode: number;
-	stdoutIncludes?: string;
-	stderrIncludes?: string;
-}
+const SESSION_ID = "019ff650-ac6d-7641-bb90-4475b973cc82";
 
-async function runTpCase(
-	args: readonly string[],
-	expectation: TpExpectation,
-): Promise<void> {
-	const server = new ScratchTmuxServer();
-	server.start();
+function withAgentDirectory<T>(callback: (directory: string) => T): T {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	const directory = mkdtempSync(join(tmpdir(), "tp-pi-sessions-"));
+	process.env.PI_CODING_AGENT_DIR = directory;
 	try {
-		const result = await runTp(args, { env: server.env });
-		expect(result.exitCode).toBe(expectation.exitCode);
-		if (expectation.stdoutIncludes !== undefined)
-			expect(result.stdout).toContain(expectation.stdoutIncludes);
-		if (expectation.stderrIncludes !== undefined)
-			expect(result.stderr).toContain(expectation.stderrIncludes);
+		return callback(directory);
 	} finally {
-		server.teardown();
+		if (previous === undefined) process.env.PI_CODING_AGENT_DIR = undefined;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		rmSync(directory, { recursive: true, force: true });
 	}
 }
 
-// The tp command tests are deliberately todo until their owning lanes land.
-// Each callback below contains the translated command invocation and assertion;
-// flipping test.todo to test activates it against a private tmux server.
-
-// Fish source: legacy/tests/test_tp.fish:648 — the displayed Pi id reaches past the UUIDv7 timestamp.
-test.todo("the displayed Pi id reaches past the UUIDv7 timestamp", async () => {
-	await runTpCase(["pi", "--", "--name", "pi-only", "two words"], {
-		exitCode: 0,
+// Fish source: legacy/tests/test_tp.fish:652 — tp sid prints the full, not
+// truncated, Pi session id.
+test("tp sid prints the full untruncated Pi session id", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	const project = basename(server.root);
+	const fake = server.createFakePi({
+		sessionName: `${project}_002`,
+		sessionId: SESSION_ID,
 	});
-});
-// Fish source: legacy/tests/test_tp.fish:652 — tp sid prints the full untruncated Pi session id.
-test.todo("tp sid prints the full untruncated Pi session id", async () => {
-	await runTpCase(["sid", "2"], {
-		exitCode: 0,
-		stdoutIncludes: "019ff650-ac6d-7641-bb90-4475b973cc82",
-	});
-});
-// Fish source: legacy/tests/test_tp.fish:656 — the id resolver returns the full id.
-test.todo("the id resolver returns the full id", async () => {
-	await runTpCase(["sid", "2"], {
-		exitCode: 0,
-		stdoutIncludes: "019ff650-ac6d-7641-bb90-4475b973cc82",
-	});
-});
-// Fish source: legacy/tests/test_tp.fish:659 — tp sid fails on a session running no Pi.
-test.todo("tp sid fails on a session running no Pi", async () => {
-	await runTpCase(["sid", "2"], { exitCode: 1 });
-});
-// Fish source: legacy/tests/test_tp.fish:660 — tp sid fails on a session that does not exist.
-test.todo("tp sid fails on a session that does not exist", async () => {
-	await runTpCase(["sid", "2"], { exitCode: 1 });
-});
-// Fish source: legacy/tests/test_tp.fish:664 — tp sid rejects invalid arguments with usage status.
-test.todo("tp sid rejects invalid arguments with usage status", async () => {
-	await runTpCase(["sid", "2"], { exitCode: 2 });
-});
-// Fish source: legacy/tests/test_tp.fish:674 — restart drops --resume and appends the recorded session id.
-test.todo(
-	"restart drops --resume and appends the recorded session id",
-	async () => {
-		await runTpCase(["2", "--restart"], { exitCode: 0 });
-	},
-);
-// Fish source: legacy/tests/test_tp.fish:679 — restart drops --continue and keeps other Pi flags.
-test.todo("restart drops --continue and keeps other Pi flags", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 0 });
-});
-// Fish source: legacy/tests/test_tp.fish:683 — restart replaces an existing --session and its value.
-test.todo("restart replaces an existing --session and its value", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 0 });
-});
-// Fish source: legacy/tests/test_tp.fish:687 — restart replaces a joined --session=value.
-test.todo("restart replaces a joined --session=value", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 0 });
-});
-// Fish source: legacy/tests/test_tp.fish:696 — restart preserves quoted argument boundaries.
-test.todo("restart preserves quoted argument boundaries", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 0 });
-});
-// Fish source: legacy/tests/test_tp.fish:704 — restart keeps an update-first wrapper intact.
-test.todo("restart keeps an update-first wrapper intact", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 0 });
-});
-// Fish source: legacy/tests/test_tp.fish:709 — restart rejects an empty recorded command.
-test.todo("restart rejects an empty recorded command", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 0 });
-});
-// Fish source: legacy/tests/test_tp.fish:715 — the session directory mirrors the path-to-dashes rule Pi uses.
-test.todo(
-	"the session directory mirrors the path-to-dashes rule Pi uses",
-	async () => {
-		await runTpCase(["pi", "--", "--name", "pi-only", "two words"], {
-			exitCode: 0,
+	try {
+		waitFor(() => fake.options()["@pi_session_id"] === SESSION_ID);
+		const result = await runTp(["sid", "2"], {
+			cwd: server.root,
+			env: server.env,
 		});
-	},
-);
-// Fish source: legacy/tests/test_tp.fish:722 — a published id with no log file is not resumable.
-test.todo("a published id with no log file is not resumable", async () => {
-	await runTpCase(["--help"], { exitCode: 1 });
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe(`${SESSION_ID}\n`);
+	} finally {
+		server.teardown();
+	}
 });
-// Fish source: legacy/tests/test_tp.fish:727 — an existing log file is found for the published id.
-test.todo("an existing log file is found for the published id", async () => {
-	await runTpCase(["--help"], { exitCode: 0 });
+
+// Fish source: legacy/tests/test_tp.fish:659 — tp sid fails without a live Pi.
+test("tp sid fails on a session running no Pi", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	const project = basename(server.root);
+	server.run(["new-session", "-d", "-s", `${project}_002`, "sleep", "30"]);
+	try {
+		const result = await runTp(["sid", "2"], {
+			cwd: server.root,
+			env: server.env,
+		});
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toContain("No live Pi session");
+	} finally {
+		server.teardown();
+	}
 });
-// Fish source: legacy/tests/test_tp.fish:732 — restart refuses a session running no Pi.
-test.todo("restart refuses a session running no Pi", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 1 });
+
+// Fish source: legacy/tests/test_tp.fish:660 — tp sid fails for an unknown session.
+test("tp sid fails on a session that does not exist", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	try {
+		const result = await runTp(["sid", "99"], {
+			cwd: server.root,
+			env: server.env,
+		});
+		expect(result.exitCode).toBe(1);
+	} finally {
+		server.teardown();
+	}
 });
-// Fish source: legacy/tests/test_tp.fish:734 — a refused restart leaves the session running.
-test.todo("a refused restart leaves the session running", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 0 });
+
+// Fish source: legacy/tests/test_tp.fish:664 — invalid sid arguments are usage errors.
+test("tp sid rejects invalid arguments with usage status", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	try {
+		const noArgument = await runTp(["sid"], {
+			cwd: server.root,
+			env: server.env,
+		});
+		const extraArgument = await runTp(["sid", "1", "extra"], {
+			cwd: server.root,
+			env: server.env,
+		});
+		expect(noArgument.exitCode).toBe(2);
+		expect(extraArgument.exitCode).toBe(2);
+	} finally {
+		server.teardown();
+	}
 });
-// Fish source: legacy/tests/test_tp.fish:739 — restart refuses a session that does not exist.
-test.todo("restart refuses a session that does not exist", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 1 });
+
+test("tp sid with no argument uses the current tp pane", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	const project = basename(server.root);
+	const fake = server.createFakePi({
+		sessionName: `${project}_002`,
+		sessionId: SESSION_ID,
+	});
+	try {
+		waitFor(() => fake.options()["@pi_session_id"] === SESSION_ID);
+		const result = await runTp(["sid"], {
+			cwd: server.root,
+			env: { ...server.env, TMUX_PANE: fake.paneId },
+		});
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe(`${SESSION_ID}\n`);
+	} finally {
+		server.teardown();
+	}
 });
-// Fish source: legacy/tests/test_tp.fish:742 — tp <n> --restart refuses a session running no Pi.
-test.todo("tp <n> --restart refuses a session running no Pi", async () => {
-	await runTpCase(["2", "--restart"], { exitCode: 1 });
+
+test("tp sid with no argument outside tmux is a usage error", async () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	try {
+		const result = await runTp(["sid"], {
+			cwd: server.root,
+			env: server.env,
+		});
+		expect(result.exitCode).toBe(2);
+	} finally {
+		server.teardown();
+	}
 });
-// Fish source: legacy/tests/test_tp.fish:744 — tp global <i> --restart refuses a session running no Pi.
-test.todo(
-	"tp global <i> --restart refuses a session running no Pi",
-	async () => {
-		await runTpCase(["global"], { exitCode: 1 });
-	},
-);
-// Fish source: legacy/tests/test_tp.fish:746 — tp <n> rejects an unknown argument.
-test.todo("tp <n> rejects an unknown argument", async () => {
-	await runTpCase(["--help"], { exitCode: 2 });
+
+// Fish source: legacy/tests/test_tp.fish:674 — restart drops stale session
+// selection and appends the exact saved path.
+test("restart drops resume and appends the recorded session path", () => {
+	expect(
+		rebuildRestartCommand("pi --name issue-filer --resume", SESSION_ID),
+	).toEqual(["pi", "--name", "issue-filer", "--session", SESSION_ID]);
+});
+
+test("restart drops continue and keeps other Pi flags", () => {
+	expect(
+		rebuildRestartCommand("pi --continue --model sonnet:high", SESSION_ID),
+	).toEqual(["pi", "--model", "sonnet:high", "--session", SESSION_ID]);
+});
+
+test("restart replaces a separate session and fork value", () => {
+	expect(
+		rebuildRestartCommand(
+			"pi --session old-session --fork old-fork --name keep",
+			SESSION_ID,
+		),
+	).toEqual(["pi", "--name", "keep", "--session", SESSION_ID]);
+});
+
+test("restart replaces joined session and fork values", () => {
+	expect(
+		rebuildRestartCommand(
+			"pi --session=old-session --fork=old-fork --name keep",
+			SESSION_ID,
+		),
+	).toEqual(["pi", "--name", "keep", "--session", SESSION_ID]);
+});
+
+// Fish source: legacy/tests/test_tp.fish:696 — quoted argument boundaries survive.
+test("restart preserves quoted argument boundaries", () => {
+	expect(
+		rebuildRestartCommand(
+			"pi --name 'two words' --model openai/gpt-5",
+			SESSION_ID,
+		),
+	).toEqual([
+		"pi",
+		"--name",
+		"two words",
+		"--model",
+		"openai/gpt-5",
+		"--session",
+		SESSION_ID,
+	]);
+});
+
+// Fish source: legacy/tests/test_tp.fish:704 — wrapper options are not parsed as
+// Pi options.
+test("restart keeps an update-first wrapper intact", () => {
+	expect(
+		rebuildRestartCommand(
+			"fish -c 'pi update --all; and pi $argv' -- --name upgrade",
+			SESSION_ID,
+		),
+	).toEqual([
+		"fish",
+		"-c",
+		"pi update --all; and pi $argv",
+		"--",
+		"--name",
+		"upgrade",
+		"--session",
+		SESSION_ID,
+	]);
+});
+
+test("restart rejects an empty recorded command", () => {
+	expect(rebuildRestartCommand("", SESSION_ID)).toBeUndefined();
+});
+
+// Fish source: legacy/tests/test_tp.fish:715 — the session directory mirrors
+// Pi's path-to-dashes rule, and legacy/tests/test_tp.fish:732 — a saved log is
+// found before restart acts.
+test("restart locates a saved session in the working-directory folder", () =>
+	withAgentDirectory((agentDirectory) => {
+		const directory = join(agentDirectory, "sessions", "--tmp-demo--");
+		mkdirSync(directory, { recursive: true });
+		const file = join(
+			directory,
+			`2026-01-01T00-00-00-000Z_${SESSION_ID}.jsonl`,
+		);
+		writeFileSync(file, "");
+		expect(findPiSessionFile("/tmp/demo", SESSION_ID)).toBe(file);
+	}));
+
+test("restart locates a saved session in the forks folder", () =>
+	withAgentDirectory((agentDirectory) => {
+		const directory = join(agentDirectory, "sessions", "forks");
+		mkdirSync(directory, { recursive: true });
+		const file = join(
+			directory,
+			`2026-01-02T00-00-00-000Z_${SESSION_ID}.jsonl`,
+		);
+		writeFileSync(file, "");
+		expect(findPiSessionFile("/tmp/demo", SESSION_ID)).toBe(file);
+	}));
+
+// The refusal checks deliberately call the exported restart primitive. Core and
+// listings own the numeric/global command routing, while this lane owns the
+// kill-before-lookup safety contract.
+test("restart refuses no Pi without killing the tmux session", () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	const project = basename(server.root);
+	const name = `${project}_001`;
+	server.run(["new-session", "-d", "-s", name, "sleep", "30"]);
+	try {
+		expect(restartSession(name)).toBe(1);
+		expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
+			0,
+		);
+	} finally {
+		server.teardown();
+	}
+});
+
+test("restart refuses a stale id without killing the tmux session", () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	const project = basename(server.root);
+	const name = `${project}_001`;
+	server.run(["new-session", "-d", "-s", name, "sleep", "30"]);
+	const pane = server
+		.run(["display-message", "-p", "-t", `${name}:0.0`, "#{pane_id}"])
+		.stdout.trim();
+	server.run(["set-option", "-p", "-t", pane, "@pi_session_id", SESSION_ID]);
+	server.run(["set-option", "-p", "-t", pane, "@pi_pid", "999999"]);
+	try {
+		expect(restartSession(name)).toBe(1);
+		expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
+			0,
+		);
+	} finally {
+		server.teardown();
+	}
+});
+
+test("restart refuses an id without a saved file without killing Pi", () => {
+	const server = new ScratchTmuxServer();
+	server.start();
+	const project = basename(server.root);
+	const name = `${project}_001`;
+	const fake = server.createFakePi({
+		sessionName: name,
+		sessionId: SESSION_ID,
+	});
+	try {
+		waitFor(() => fake.options()["@pi_session_id"] === SESSION_ID);
+		withAgentDirectory(() => {
+			expect(restartSession(name)).toBe(1);
+			expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
+				0,
+			);
+		});
+	} finally {
+		server.teardown();
+	}
+});
+
+// These command-routing cases belong to the concurrent core/listings lanes.
+test.todo("tp <n> --restart routes through restartSession", async () => {
+	await runTp(["2", "--restart"]);
+});
+test.todo("tp global <i> --restart routes through restartSession", async () => {
+	await runTp(["global", "1", "--restart"]);
 });
