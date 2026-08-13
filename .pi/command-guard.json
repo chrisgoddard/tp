@@ -1,0 +1,3 @@
+{
+	"disabledRulesBash": ["git-force-push"]
+}

@@ -264,7 +264,7 @@ export function restartSession(
 	// Keep tmux's session alive while the Pi pane exits. Otherwise tmux may tear
 	// down the last session before the replacement can be created.
 	tmuxCommand(
-		["set-option", "-w", "-t", `=${sessionNameValue}`, "remain-on-exit", "on"],
+		["set-option", "-w", "-t", sessionNameValue, "remain-on-exit", "on"],
 		true,
 	);
 	// Always replace the tmux session. If SIGTERM did not finish within five

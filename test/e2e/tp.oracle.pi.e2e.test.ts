@@ -7,6 +7,7 @@ import {
 	rebuildRestartCommand,
 	restartSession,
 } from "../../src/commands/pi-session";
+import { isProcessAlive } from "../../src/lib/pi";
 import { ScratchTmuxServer, runTp, waitFor } from "./harness";
 
 const SESSION_ID = "019ff650-ac6d-7641-bb90-4475b973cc82";
@@ -224,6 +225,8 @@ test("restart locates a saved session in the working-directory folder", () =>
 		expect(findPiSessionFile("/tmp/demo", SESSION_ID)).toBe(file);
 	}));
 
+// Fish source: legacy/tests/test_tp.fish:740 — a saved conversation in a
+// custom first-level session directory is resumable.
 test("restart locates a saved session in the forks folder", () =>
 	withAgentDirectory((agentDirectory) => {
 		const directory = join(agentDirectory, "sessions", "forks");
@@ -234,6 +237,71 @@ test("restart locates a saved session in the forks folder", () =>
 		);
 		writeFileSync(file, "");
 		expect(findPiSessionFile("/tmp/demo", SESSION_ID)).toBe(file);
+	}));
+
+// Fish source: legacy/tests/test_tp.fish:763 — restart reopens the exact saved
+// conversation instead of invoking global ID lookup.
+test("restart passes the exact fork log path to the recreated Pi", () =>
+	withAgentDirectory((agentDirectory) => {
+		const server = new ScratchTmuxServer();
+		server.start();
+		const name = `${basename(server.root)}_001`;
+		const sessionId = "019ff6ca-d2be-7455-a16b-3847839264fc";
+		const directory = join(agentDirectory, "sessions", "forks");
+		const file = join(directory, `2026-01-02T00-00-00-000Z_${sessionId}.jsonl`);
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(file, "");
+		server.run([
+			"new-session",
+			"-d",
+			"-s",
+			name,
+			"-c",
+			server.root,
+			"--",
+			"tail",
+			"-f",
+			"/dev/null",
+			"--",
+		]);
+		const pane = server
+			.run(["display-message", "-p", "-t", `${name}:0.0`, "#{pane_id}"])
+			.stdout.trim();
+		const pid = Number(
+			server
+				.run(["display-message", "-p", "-t", pane, "#{pane_pid}"])
+				.stdout.trim(),
+		);
+		server.run(["set-option", "-p", "-t", pane, "@pi_session_id", sessionId]);
+		server.run(["set-option", "-p", "-t", pane, "@pi_pid", String(pid)]);
+		server.run([
+			"set-environment",
+			"-t",
+			`=${name}`,
+			"TP_CMD",
+			"tail -f /dev/null --",
+		]);
+
+		const previousSocket = process.env.TP_TMUX_SOCKET;
+		const previousTmux = process.env.TMUX;
+		process.env.TP_TMUX_SOCKET = server.socket;
+		process.env.TMUX = undefined;
+		try {
+			expect(isProcessAlive(pid)).toBe(true);
+			expect(restartSession(name)).toBe(0);
+			expect(isProcessAlive(pid)).toBe(false);
+			expect(
+				server
+					.run(["show-environment", "-t", `=${name}`, "TP_CMD"])
+					.stdout.trim(),
+			).toBe(`TP_CMD=tail -f /dev/null -- --session ${file}`);
+		} finally {
+			if (previousSocket === undefined) process.env.TP_TMUX_SOCKET = undefined;
+			else process.env.TP_TMUX_SOCKET = previousSocket;
+			if (previousTmux === undefined) process.env.TMUX = undefined;
+			else process.env.TMUX = previousTmux;
+			server.teardown();
+		}
 	}));
 
 // The refusal checks deliberately call the exported restart primitive. Core and
