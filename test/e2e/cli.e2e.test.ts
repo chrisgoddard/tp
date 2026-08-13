@@ -9,6 +9,10 @@ const project = basename(process.cwd()).replace(/^\.+/, "");
 const scratch = mkdtempSync(join(tmpdir(), "tp-cli-e2e-"));
 const wrapper = join(scratch, "tp");
 
+function hasBinary(name: string): boolean {
+	return Bun.which(name) !== null;
+}
+
 function tmux(args: readonly string[]): void {
 	const result = Bun.spawnSync(["tmux", "-L", socket, ...args], {
 		stdout: "ignore",
@@ -74,22 +78,28 @@ test("help and version use stdout while unimplemented commands fail", async () =
 	});
 });
 
-test("generated fish shim delegates to the protocol", async () => {
-	const shim = await runTp(["completions", "fish"]);
-	expect(shim.code).toBe(0);
-	const path = join(scratch, "tp.fish");
-	writeFileSync(path, shim.stdout);
-	const fish = Bun.spawn(["fish", "-c", `source ${path}; complete -C 'tp '`], {
-		cwd: process.cwd(),
-		env: {
-			...process.env,
-			PATH: `${scratch}:${process.env.PATH}`,
-			TP_TMUX_SOCKET: socket,
-		},
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const output = await new Response(fish.stdout).text();
-	expect(await fish.exited).toBe(0);
-	expect(output).toContain("kill");
-});
+test.skipIf(!hasBinary("fish"))(
+	"generated fish shim delegates to the protocol (requires fish)",
+	async () => {
+		const shim = await runTp(["completions", "fish"]);
+		expect(shim.code).toBe(0);
+		const path = join(scratch, "tp.fish");
+		writeFileSync(path, shim.stdout);
+		const fish = Bun.spawn(
+			["fish", "-c", `source ${path}; complete -C 'tp '`],
+			{
+				cwd: process.cwd(),
+				env: {
+					...process.env,
+					PATH: `${scratch}:${process.env.PATH}`,
+					TP_TMUX_SOCKET: socket,
+				},
+				stdout: "pipe",
+				stderr: "pipe",
+			},
+		);
+		const output = await new Response(fish.stdout).text();
+		expect(await fish.exited).toBe(0);
+		expect(output).toContain("kill");
+	},
+);
