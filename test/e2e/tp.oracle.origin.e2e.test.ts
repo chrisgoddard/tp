@@ -28,9 +28,32 @@ function tmuxCommand(server: ScratchTmuxServer, args: string[]) {
 	return server.run(args, true);
 }
 
+const ORIGIN_WAIT_ATTEMPTS = 400;
+
+function waitForOrigin(predicate: () => boolean): void {
+	waitFor(predicate, ORIGIN_WAIT_ATTEMPTS);
+}
+
+function runNewSession(server: ScratchTmuxServer, args: string[]): void {
+	for (let attempt = 0; attempt < ORIGIN_WAIT_ATTEMPTS; attempt += 1) {
+		try {
+			server.run(args);
+			return;
+		} catch (error) {
+			if (
+				!(error instanceof Error) ||
+				!error.message.includes("server exited unexpectedly")
+			)
+				throw error;
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+		}
+	}
+	throw new Error("tmux new-session failed: server startup timed out");
+}
+
 function newSession(server: ScratchTmuxServer, command: string[]): string {
 	const name = `origin-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-	server.run(["new-session", "-d", "-s", name, "--", ...command]);
+	runNewSession(server, ["new-session", "-d", "-s", name, "--", ...command]);
 	return name;
 }
 
@@ -46,9 +69,9 @@ const socket = process.env.TP_TMUX_SOCKET!;
 const resultPath = process.env.TP_ORIGIN_RESULT!;
 const tmux = (args: string[]) => Bun.spawnSync({ cmd: ["tmux", "-L", socket, "-f", "/dev/null", ...args], stdout: "pipe", stderr: "pipe" });
 let tty = "";
-for (let i = 0; i < 80 && !tty; i++) {
+for (let i = 0; i < 400 && !tty; i++) {
   tty = new TextDecoder().decode(tmux(["display-message", "-p", "#{client_tty}"]).stdout).trim();
-  if (!tty) await Bun.sleep(10);
+  if (!tty) await Bun.sleep(25);
 }
 const option = "@tp_ssh_source_" + tty.trim().replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 tmux(["set-option", "-gq", option, ${JSON.stringify(options.mapping)}]);
@@ -67,7 +90,7 @@ async function attachAndRead(
 	runner: { root: string; resultPath: string; runner: string },
 	path?: string,
 ): Promise<OriginResult> {
-	server.run([
+	runNewSession(server, [
 		"new-session",
 		"-d",
 		"-s",
@@ -94,7 +117,7 @@ async function attachAndRead(
 		stderr: "pipe",
 	});
 	await child.exited;
-	waitFor(() => {
+	waitForOrigin(() => {
 		try {
 			return readFileSync(runner.resultPath, "utf8").length > 0;
 		} catch {
@@ -129,7 +152,7 @@ async function outsideAttach(
 	server.start();
 	const project = basename(server.root);
 	const session = `${project}_001`;
-	server.run([
+	runNewSession(server, [
 		"new-session",
 		"-d",
 		"-s",
@@ -139,7 +162,7 @@ async function outsideAttach(
 		"--",
 		"sh",
 		"-c",
-		"sleep 1",
+		"sleep 30",
 	]);
 	const root = mkdtempSync(join(server.root, "attach-runner-"));
 	const ttyPath = join(root, "tty");
@@ -162,10 +185,42 @@ async function outsideAttach(
 		stdout: "pipe",
 		stderr: "pipe",
 	});
-	await child.exited;
-	const tty = readFileSync(ttyPath, "utf8").trim();
+	let tty = "";
+	waitForOrigin(() => {
+		try {
+			tty = readFileSync(ttyPath, "utf8").trim();
+			return Boolean(tty);
+		} catch {
+			return false;
+		}
+	});
 	const suffix = sanitizeClientTty(tty);
 	if (!suffix) throw new Error(`invalid attached tty: ${tty}`);
+	waitForOrigin(() => {
+		const clients = server
+			.run(["list-clients", "-F", "#{client_tty}"], true)
+			.stdout.split("\n")
+			.map((client) => client.trim());
+		return clients.includes(tty);
+	});
+	if (sshConnection) {
+		waitForOrigin(() => {
+			const mapping = server
+				.run(["show-option", "-gqv", `@tp_ssh_source_${suffix}`], true)
+				.stdout.trim();
+			return mapping.length > 0;
+		});
+	}
+	waitForOrigin(() => {
+		const options = server.run(["show-options", "-g"], true).stdout;
+		return (
+			!options.includes("tp_ssh_source_pending_") &&
+			!options.includes("tp_ssh_tty_pending_") &&
+			!options.includes("tp_ssh_owner_pending_")
+		);
+	});
+	server.run(["kill-session", "-t", `=${session}`], true);
+	await child.exited;
 	const mapping = server
 		.run(["show-option", "-gqv", `@tp_ssh_source_${suffix}`], true)
 		.stdout.trim();
@@ -350,7 +405,7 @@ async function directStamp(
 	);
 	let firstClient = "";
 	let firstCreated = "";
-	waitFor(() => {
+	waitForOrigin(() => {
 		const fields = tmuxCommand(server, [
 			"list-clients",
 			"-F",
@@ -373,7 +428,7 @@ async function directStamp(
 	server.run(["detach-client", "-t", firstClient], true);
 	let secondClient = "";
 	let secondCreated = "";
-	waitFor(() => {
+	waitForOrigin(() => {
 		const fields = tmuxCommand(server, [
 			"list-clients",
 			"-F",
