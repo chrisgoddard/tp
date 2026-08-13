@@ -109,35 +109,37 @@ The concrete `todo-awaiting-lane-#14`, `#16`, `#17`, `#18`, `#19`, and `#21` sta
 | `legacy/tests/test_tp.fish:715 — the session directory mirrors the path-to-dashes rule Pi uses.` | `the session directory mirrors the path-to-dashes rule Pi uses` | todo-awaiting-lane-#18 |
 | `legacy/tests/test_tp.fish:722 — a published id with no log file is not resumable.` | `a published id with no log file is not resumable` | todo-awaiting-lane-#18 |
 | `legacy/tests/test_tp.fish:727 — an existing log file is found for the published id.` | `an existing log file is found for the published id` | todo-awaiting-lane-#18 |
-| `legacy/tests/test_tp.fish:732 — restart refuses a session running no Pi.` | `restart refuses a session running no Pi` | todo-awaiting-lane-#18 |
-| `legacy/tests/test_tp.fish:734 — a refused restart leaves the session running.` | `a refused restart leaves the session running` | todo-awaiting-lane-#18 |
-| `legacy/tests/test_tp.fish:739 — restart refuses a session that does not exist.` | `restart refuses a session that does not exist` | todo-awaiting-lane-#18 |
-| `legacy/tests/test_tp.fish:742 — tp <n> --restart refuses a session running no Pi.` | `tp <n> --restart refuses a session running no Pi` | todo-awaiting-lane-#18 |
-| `legacy/tests/test_tp.fish:744 — tp global <i> --restart refuses a session running no Pi.` | `tp global <i> --restart refuses a session running no Pi` | todo-awaiting-lane-#18 |
-| `legacy/tests/test_tp.fish:746 — tp <n> rejects an unknown argument.` | `tp <n> rejects an unknown argument` | todo-awaiting-lane-#18 |
-| `legacy/tests/test_tp.fish:768 — tp p update-first launches the updater before Pi and preserves Pi arguments.` | `tp p update-first launches the updater before Pi and preserves Pi arguments` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:772 — tp p applies its name to the tmux session.` | `tp p applies its name to the tmux session` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:773 — tp p attaches to the new session.` | `tp p attaches to the new session` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:776 — tp pi passes every argument after -- directly to Pi.` | `tp pi passes every argument after -- directly to Pi` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:782 — tp pi stops interpreting options after --.` | `tp pi stops interpreting options after --` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:789 — tp pi rejects a missing name value.` | `tp pi rejects a missing name value` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:793 — tp pi shows usage after a missing name value.` | `tp pi reports usage for a missing name value` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:794 — tp pi creates no session after a missing name value.` | `tp pi creates no session after a missing name value` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:813 — screenshots are listed newest first.` | `screenshots are listed newest first` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:816 — tp shot returns the newest screenshot.` | `tp shot returns the newest screenshot` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:817 — tp shot list accepts a result limit.` | `tp shot list accepts a result limit` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:818 — tp shot dir returns the screenshot directory.` | `tp shot dir returns the screenshot directory` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:822 — tp shot latest rejects an extra argument.` | `tp shot latest rejects an extra argument` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:826 — tp shot rejects invalid arguments with usage status.` | `tp shot rejects invalid arguments with usage status` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:830 — tp shot list rejects an oversized count.` | `tp shot list rejects an oversized count` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:834 — oversized screenshot counts fail without Fish diagnostics.` | `oversized screenshot counts fail without Fish diagnostics` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:837 — tp name stores a session label.` | `tp name stores a session label` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:840 — project completions contain sorted session numbers.` | `project completions contain sorted session numbers` | todo-awaiting-lane-#14 |
-| `legacy/tests/test_tp.fish:843 — project completion includes the session label.` | `project completion includes the session label` | todo-awaiting-lane-#14 |
-| `legacy/tests/test_tp.fish:848 — global completions contain one-based indexes.` | `global completions contain one-based indexes` | todo-awaiting-lane-#14 |
-| `legacy/tests/test_tp.fish:850 — global completion indexes match list order.` | `global completion indexes match list order` | todo-awaiting-lane-#14 |
-| `legacy/tests/test_tp.fish:852 — tp kill removes a selected project session.` | `tp kill removes a selected project session` | todo-awaiting-lane-#16 |
-| `legacy/tests/test_tp.fish:860 — tp kill removes all current-project sessions.` | `tp kill removes all current-project sessions` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:740 — a saved conversation in a custom first-level session directory is resumable.` | `restart locates a saved session in the forks folder` | todo-awaiting-lane-#18 |
+| `legacy/tests/test_tp.fish:763 — restart reopens the exact saved conversation instead of invoking global ID lookup.` | `restart passes the exact fork log path to the recreated Pi` | todo-awaiting-lane-#18 |
+| `legacy/tests/test_tp.fish:775 — restart refuses a session running no Pi.` | `restart refuses a session running no Pi` | todo-awaiting-lane-#18 |
+| `legacy/tests/test_tp.fish:777 — a refused restart leaves the session running.` | `a refused restart leaves the session running` | todo-awaiting-lane-#18 |
+| `legacy/tests/test_tp.fish:782 — restart refuses a session that does not exist.` | `restart refuses a session that does not exist` | todo-awaiting-lane-#18 |
+| `legacy/tests/test_tp.fish:785 — tp <n> --restart refuses a session running no Pi.` | `tp <n> --restart refuses a session running no Pi` | todo-awaiting-lane-#18 |
+| `legacy/tests/test_tp.fish:787 — tp global <i> --restart refuses a session running no Pi.` | `tp global <i> --restart refuses a session running no Pi` | todo-awaiting-lane-#18 |
+| `legacy/tests/test_tp.fish:789 — tp <n> rejects an unknown argument.` | `tp <n> rejects an unknown argument` | todo-awaiting-lane-#18 |
+| `legacy/tests/test_tp.fish:811 — tp p update-first launches the updater before Pi and preserves Pi arguments.` | `tp p update-first launches the updater before Pi and preserves Pi arguments` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:815 — tp p applies its name to the tmux session.` | `tp p applies its name to the tmux session` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:816 — tp p attaches to the new session.` | `tp p attaches to the new session` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:819 — tp pi passes every argument after -- directly to Pi.` | `tp pi passes every argument after -- directly to Pi` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:825 — tp pi stops interpreting options after --.` | `tp pi stops interpreting options after --` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:832 — tp pi rejects a missing name value.` | `tp pi rejects a missing name value` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:836 — tp pi shows usage after a missing name value.` | `tp pi reports usage for a missing name value` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:837 — tp pi creates no session after a missing name value.` | `tp pi creates no session after a missing name value` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:856 — screenshots are listed newest first.` | `screenshots are listed newest first` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:859 — tp shot returns the newest screenshot.` | `tp shot returns the newest screenshot` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:860 — tp shot list accepts a result limit.` | `tp shot list accepts a result limit` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:861 — tp shot dir returns the screenshot directory.` | `tp shot dir returns the screenshot directory` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:865 — tp shot latest rejects an extra argument.` | `tp shot latest rejects an extra argument` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:869 — tp shot rejects invalid arguments with usage status.` | `tp shot rejects invalid arguments with usage status` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:873 — tp shot list rejects an oversized count.` | `tp shot list rejects an oversized count` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:877 — oversized screenshot counts fail without Fish diagnostics.` | `oversized screenshot counts fail without Fish diagnostics` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:880 — tp name stores a session label.` | `tp name stores a session label` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:883 — project completions contain sorted session numbers.` | `project completions contain sorted session numbers` | todo-awaiting-lane-#14 |
+| `legacy/tests/test_tp.fish:886 — project completion includes the session label.` | `project completion includes the session label` | todo-awaiting-lane-#14 |
+| `legacy/tests/test_tp.fish:891 — global completions contain one-based indexes.` | `global completions contain one-based indexes` | todo-awaiting-lane-#14 |
+| `legacy/tests/test_tp.fish:893 — global completion indexes match list order.` | `global completion indexes match list order` | todo-awaiting-lane-#14 |
+| `legacy/tests/test_tp.fish:895 — tp kill removes a selected project session.` | `tp kill removes a selected project session` | todo-awaiting-lane-#16 |
+| `legacy/tests/test_tp.fish:903 — tp kill removes all current-project sessions.` | `tp kill removes all current-project sessions` | todo-awaiting-lane-#16 |
 | `legacy/tests/test_tp_shot.fish:218 — remote setup reports its path under fish.` | `remote setup reports its path under fish` | todo-awaiting-lane-#21 |
 | `legacy/tests/test_tp_shot.fish:219 — remote setup creates a private directory under fish.` | `remote setup creates a private directory under fish` | todo-awaiting-lane-#21 |
 | `legacy/tests/test_tp_shot.fish:231 — custom remote setup reports its exact path under fish.` | `custom remote setup reports its exact path under fish` | todo-awaiting-lane-#21 |
@@ -209,7 +211,7 @@ The concrete `todo-awaiting-lane-#14`, `#16`, `#17`, `#18`, `#19`, and `#21` sta
 - `todo-awaiting-lane-#14`: 10 rows.
 - `todo-awaiting-lane-#16`: 19 rows.
 - `todo-awaiting-lane-#17`: 54 rows.
-- `todo-awaiting-lane-#18`: 22 rows.
+- `todo-awaiting-lane-#18`: 24 rows.
 - `todo-awaiting-lane-#19`: 27 rows.
 - `todo-awaiting-lane-#21`: 62 rows.
 - `not-ported(Fish-only function loading)`: 1 row.
