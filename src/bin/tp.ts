@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
-import { completionsCommand } from "../commands/completions";
-import { helpCommand } from "../commands/help";
+import { registerCommands } from "../commands/register";
 import {
 	CliUsageError,
 	type CommandContext,
@@ -9,7 +8,6 @@ import {
 	type ParsedArgs,
 	type Resolution,
 	parseCommandArgs,
-	registerCommandHandler,
 	renderHelp,
 	resolveInvocation,
 } from "../lib/cli";
@@ -17,8 +15,7 @@ import { renderCompletionOutput } from "../lib/complete";
 
 const VERSION = "0.2.0";
 
-registerCommandHandler("help", helpCommand);
-registerCommandHandler("completions", completionsCommand);
+registerCommands();
 
 function versionCommand(context: CommandContext): number {
 	context.stdout(`tp ${VERSION}\n`);
@@ -92,7 +89,6 @@ export async function run(
 			);
 			return typeof result === "number" ? result : 0;
 		}
-		process.stderr.write(`tp ${command.name}: not implemented yet\n`);
 		return 1;
 	} catch (error) {
 		if (error instanceof CliUsageError) {

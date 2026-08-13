@@ -1,7 +1,8 @@
 # Fish → Bun E2E parity
 
 Every behavioral assertion in the frozen Fish tests has one named Bun spec below.
-The concrete `todo-awaiting-lane-#14`, `#16`, `#17`, `#18`, `#19`, and `#21` statuses identify the owning implementation lane. Command behavior belongs to later lanes and the translated oracle must remain green before those lanes land.
+The oracle specs live in their owning files: `tp.oracle.cli.e2e.test.ts` (lane #14), `tp.oracle.core.e2e.test.ts` (lane #16), `tp.oracle.listings.e2e.test.ts` (lane #17), `tp.oracle.pi.e2e.test.ts` (lane #18), and `tp.oracle.origin.e2e.test.ts` (lane #19).
+The concrete `todo-awaiting-lane-#14`, `#16`, `#17`, `#18`, `#19`, and `#21` statuses identify the owning implementation lane. The live status is the `test()`/`test.todo()` marker in each per-lane file. Command behavior belongs to later lanes and the translated oracle must remain green before those lanes land.
 
 | Fish source test | Bun spec | Status |
 | --- | --- | --- |
