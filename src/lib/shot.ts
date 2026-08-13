@@ -45,6 +45,13 @@ function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
+function remotePathExpression(remoteDir: string): string {
+	if (remoteDir === "~") return '"$HOME"';
+	if (remoteDir.startsWith("~/"))
+		return `"$HOME"/${shellQuote(remoteDir.slice(2))}`;
+	return shellQuote(remoteDir);
+}
+
 function commandResult(
 	command: string,
 	args: readonly string[],
@@ -93,12 +100,8 @@ function commandResult(
 function remoteSetupCommand(remoteDir?: string): string {
 	if (remoteDir === undefined)
 		return 'umask 077; mkdir -p "$HOME/.cache/pi/screenshots" && chmod 700 "$HOME/.cache/pi/screenshots" && printf "%s\\n" "$HOME/.cache/pi/screenshots"';
-	const path = remoteDir.startsWith("~/")
-		? `"$HOME/${remoteDir.slice(2)}"`
-		: shellQuote(remoteDir);
-	const output = remoteDir.startsWith("~/")
-		? `"$HOME/${remoteDir.slice(2)}"`
-		: shellQuote(remoteDir);
+	const path = remotePathExpression(remoteDir);
+	const output = path;
 	return `umask 077; mkdir -p ${path} && chmod 700 ${path} && printf "%s\\n" ${output}`;
 }
 

@@ -41,9 +41,20 @@ async function runTpWithTty(
 			terminal: { data: (_terminal, data) => output.push(data) },
 		},
 	);
-	child.terminal?.write(`${input}\x04`);
-	const exitCode = await child.exited;
-	child.terminal?.close();
+	child.terminal?.write(input);
+	let exitCode: number;
+	try {
+		exitCode = await Promise.race([
+			child.exited,
+			(async () => {
+				await Bun.sleep(3_000);
+				child.kill();
+				throw new Error("PTY command did not exit within 3 seconds");
+			})(),
+		]);
+	} finally {
+		child.terminal?.close();
+	}
 	return {
 		stdout: new TextDecoder().decode(Buffer.concat(output)),
 		stderr: "",

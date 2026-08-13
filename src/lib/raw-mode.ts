@@ -19,21 +19,43 @@ export function exitRawMode(input: RawModeInput = defaultInput()): void {
 	input.pause();
 }
 
-/** Run a callback with raw mode enabled and restore it on completion or SIGINT. */
+/** Run a callback with raw mode enabled and restore it on completion or signal. */
 export async function withRawMode<T>(
 	callback: () => T | Promise<T>,
 	input: RawModeInput = defaultInput(),
 ): Promise<T> {
 	enterRawMode(input);
-	const onSigint = (): never => {
+	let cleaned = false;
+	const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const;
+	const cleanup = (): void => {
+		if (cleaned) return;
+		cleaned = true;
 		exitRawMode(input);
-		process.exit(130);
 	};
-	process.once("SIGINT", onSigint);
+	const handlers = new Map(
+		signals.map((signal) => [
+			signal,
+			(): void => {
+				cleanup();
+				for (const candidate of signals) {
+					const handler = handlers.get(candidate);
+					if (handler) process.off(candidate, handler);
+				}
+				process.kill(process.pid, signal);
+			},
+		]),
+	);
+	for (const signal of signals) {
+		const handler = handlers.get(signal);
+		if (handler) process.once(signal, handler);
+	}
 	try {
 		return await callback();
 	} finally {
-		process.off("SIGINT", onSigint);
-		exitRawMode(input);
+		for (const signal of signals) {
+			const handler = handlers.get(signal);
+			if (handler) process.off(signal, handler);
+		}
+		cleanup();
 	}
 }

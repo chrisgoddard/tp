@@ -8,7 +8,6 @@ import {
 	captureImage,
 	copyToClipboard,
 	createShotTransport,
-	expandRemoteDir,
 	notify,
 	recordShotFailure,
 	runAsyncWorker,
@@ -231,8 +230,7 @@ async function main(): Promise<number> {
 			sourcePath = staged.path;
 			cleanupSource = staged.cleanup;
 			cleanupPath = staged.cleanupPath;
-			const remoteDir =
-				expandRemoteDir(config.shot.remote_dir, env) ?? joinHome(env);
+			const remoteDir = transport.prepareDirectory(config.shot.remote_dir);
 			if (!remoteDir.startsWith("/")) {
 				console.error("tp-shot: TP_SHOT_REMOTE_DIR must be an absolute path");
 				if (cleanupSource)
@@ -311,10 +309,6 @@ async function main(): Promise<number> {
 		);
 		return error instanceof Error && error.message.startsWith("Usage:") ? 2 : 1;
 	}
-}
-
-function joinHome(env: Record<string, string | undefined>): string {
-	return `${env.HOME || "/tmp"}/.cache/pi/screenshots`;
 }
 
 async function uuid(): Promise<string> {

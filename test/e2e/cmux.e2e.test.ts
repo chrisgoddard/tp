@@ -102,6 +102,7 @@ test("tp cmux opens a new workspace and starts the tmux session", async () => {
 			exitCode: 0,
 			stdout: "Opened alpha_001 in cmux\n",
 		});
+
 		const create = cmux.requests.find(
 			(request) => request.method === "workspace.create",
 		);
@@ -119,6 +120,26 @@ test("tp cmux opens a new workspace and starts the tmux session", async () => {
 			workspace_id: "workspace:1",
 			text: 'exec tmux attach-session -t "=$TP_CMUX_SESSION"\n',
 		});
+	} finally {
+		cmux.stop();
+		server.teardown();
+	}
+});
+
+test("tp cmux reports workspace protocol failures with the session", async () => {
+	const server = new ScratchTmuxServer();
+	const cmux = new FakeCmuxSocket([], {
+		failure: { method: "workspace.create", response: "error" },
+	});
+	server.start();
+	cmux.start();
+	try {
+		makeSessions(server, [{ name: "alpha_001" }]);
+		const result = await runCmux(server, cmux, "1");
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toContain(
+			"cmux workspace.create failed for session 'alpha_001': fixture rejected request",
+		);
 	} finally {
 		cmux.stop();
 		server.teardown();

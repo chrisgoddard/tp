@@ -2,12 +2,13 @@ import {
 	existsSync,
 	mkdtempSync,
 	readFileSync,
+	readSync,
 	readdirSync,
+	rmSync,
 	statSync,
-	unlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { type CommandContext, registerCommandHandler } from "../lib/cli";
 import { configPath, loadConfig } from "../lib/config";
 import { createLayoutSession } from "../lib/layout";
@@ -111,9 +112,27 @@ function replayOutput(path: string, stdout: (text: string) => void): void {
 		// A command with no pane output has nothing to replay.
 	}
 	try {
-		unlinkSync(path);
+		rmSync(dirname(path), { recursive: true, force: true });
 	} catch {
-		// The temporary file may have been removed by a previous replay.
+		// Cleanup must not hide the command result.
+	}
+}
+
+function cleanupStaleCloseDirectories(): void {
+	const cutoff = Date.now() - 60 * 60 * 1000;
+	try {
+		for (const entry of readdirSync(tmpdir(), { withFileTypes: true })) {
+			if (!entry.isDirectory() || !entry.name.startsWith("tp-close-")) continue;
+			const path = join(tmpdir(), entry.name);
+			try {
+				if (statSync(path).mtimeMs < cutoff)
+					rmSync(path, { recursive: true, force: true });
+			} catch {
+				// Stale capture cleanup is best effort.
+			}
+		}
+	} catch {
+		// The temporary directory may not be readable in a restricted environment.
 	}
 }
 
@@ -407,7 +426,14 @@ function killCommand(context: CommandContext): number {
 		context.stderr(`Kill ${sessions.length} sessions for '${project}'? [y/N]`);
 		let answer = "";
 		try {
-			answer = readFileSync(0, "utf8").trim();
+			const byte = Buffer.alloc(1);
+			const bytes: number[] = [];
+			while (true) {
+				const count = readSync(0, byte, 0, 1, null);
+				if (count === 0 || byte[0] === 10 || byte[0] === 13) break;
+				bytes.push(byte[0] ?? 0);
+			}
+			answer = new TextDecoder().decode(new Uint8Array(bytes)).trim();
 		} catch {
 			return 2;
 		}
@@ -540,6 +566,7 @@ function shotCommand(context: CommandContext): number {
 }
 
 export function registerCoreCommands(): void {
+	cleanupStaleCloseDirectories();
 	registerCommandHandler("new", nextSession);
 	registerCommandHandler("pi", piCommand);
 	registerCommandHandler("last", lastCommand);

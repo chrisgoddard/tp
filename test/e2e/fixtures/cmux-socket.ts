@@ -18,6 +18,10 @@ export interface CmuxRequest {
 
 export interface FakeCmuxSocketOptions {
 	rejectRequests?: boolean;
+	failure?: {
+		method: string;
+		response: "error" | "malformed";
+	};
 }
 
 export class FakeCmuxSocket {
@@ -26,6 +30,7 @@ export class FakeCmuxSocket {
 	readonly requests: CmuxRequest[] = [];
 	private readonly workspaces: CmuxWorkspace[];
 	private readonly rejectRequests: boolean;
+	private readonly failure?: FakeCmuxSocketOptions["failure"];
 	private listener?: Bun.UnixSocketListener<unknown>;
 	private nextWorkspace = 1;
 
@@ -35,6 +40,7 @@ export class FakeCmuxSocket {
 	) {
 		this.workspaces = workspaces.map((workspace) => ({ ...workspace }));
 		this.rejectRequests = options.rejectRequests ?? false;
+		this.failure = options.failure;
 		for (const workspace of this.workspaces) {
 			const ref = workspace.ref ?? workspace.id;
 			const match = ref?.match(/^workspace:(\d+)$/);
@@ -76,6 +82,17 @@ export class FakeCmuxSocket {
 			return;
 		}
 		this.requests.push(request);
+		if (this.failure?.method === request.method) {
+			if (this.failure.response === "malformed") {
+				socket.write("not-json\n");
+			} else {
+				socket.write(
+					`${JSON.stringify({ id: request.id, ok: false, error: { message: "fixture rejected request" } })}\n`,
+				);
+			}
+			socket.end();
+			return;
+		}
 		let result: Record<string, unknown> = {};
 		switch (request.method) {
 			case "system.ping":

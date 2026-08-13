@@ -253,6 +253,52 @@ test("SIGINT during watch restores terminal modes", async () => {
 	});
 });
 
+test("SIGTERM during watch restores terminal modes", async () => {
+	await withServer(async (server) => {
+		const fake = server.createFakePi({
+			sessionName: `${project}_001`,
+			state: "idle",
+		});
+		const before = join(server.root, "sigterm-before");
+		const after = join(server.root, "sigterm-after");
+		const pidPath = join(server.root, "sigterm-pid");
+		try {
+			waitFor(() => fake.options()["@pi_state"] === "idle");
+			const script = `stty -g > ${before}; ${process.execPath} ${join(repoRoot, "src/bin/tp.ts")} w & child=$!; printf '%s' "$child" > ${pidPath}; wait "$child"; code=$?; stty -g > ${after}; exit $code`;
+			server.run([
+				"new-session",
+				"-d",
+				"-s",
+				"sigterm-watcher",
+				"-e",
+				`TP_TMUX_SOCKET=${server.socket}`,
+				"--",
+				"/bin/sh",
+				"-c",
+				script,
+			]);
+			waitFor(() => existsSync(pidPath));
+			const watcherPid = Number(readFileSync(pidPath, "utf8"));
+			try {
+				process.kill(watcherPid, "SIGTERM");
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+			}
+			waitFor(
+				() =>
+					server.run(["has-session", "-t", "=sigterm-watcher"], true)
+						.exitCode !== 0,
+				200,
+				25,
+			);
+			expect(await Bun.file(before).text()).toBe(await Bun.file(after).text());
+		} finally {
+			fake.stop();
+			server.run(["kill-session", "-t", "=sigterm-watcher"], true);
+		}
+	});
+});
+
 test("watch redraws after a state change and exits on a key", async () => {
 	await withServer(async (server) => {
 		const fake = server.createFakePi({

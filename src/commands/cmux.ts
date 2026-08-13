@@ -30,6 +30,22 @@ class CmuxProtocolError extends Error {
 	}
 }
 
+async function requestForSession(
+	method: string,
+	sessionName: string,
+	params: JsonObject = {},
+): Promise<unknown> {
+	try {
+		return await request(method, params);
+	} catch (error) {
+		if (error instanceof CmuxTransportError) throw error;
+		const detail = error instanceof Error ? error.message : String(error);
+		throw new CmuxProtocolError(
+			`cmux ${method} failed for session '${sessionName}': ${detail}`,
+		);
+	}
+}
+
 function asObject(value: unknown): JsonObject | undefined {
 	return typeof value === "object" && value !== null && !Array.isArray(value)
 		? (value as JsonObject)
@@ -179,21 +195,17 @@ async function openSession(
 	context: CommandContext,
 	session: TmuxSession,
 ): Promise<void> {
-	const workspaces = await request("workspace.list");
+	const workspaces = await requestForSession("workspace.list", session.name);
 	const existingRef = findWorkspaceRef(workspaces, session.name);
 	if (existingRef) {
-		try {
-			await request("workspace.select", { workspace_id: existingRef });
-		} catch (error) {
-			if (error instanceof CmuxTransportError) throw error;
-			context.stderr(`Failed to focus cmux workspace for '${session.name}'`);
-			throw error;
-		}
+		await requestForSession("workspace.select", session.name, {
+			workspace_id: existingRef,
+		});
 		context.stdout(`Focused cmux workspace for ${session.name}\n`);
 		return;
 	}
 
-	const created = await request("workspace.create", {
+	const created = await requestForSession("workspace.create", session.name, {
 		title: `tp:${session.name}`,
 		cwd: session.cwd || process.env.HOME || "/",
 		workspace_env: { TP_CMUX_SESSION: session.name },
@@ -208,9 +220,9 @@ async function openSession(
 		: undefined;
 	if (!createdRef)
 		throw new CmuxProtocolError(
-			"cmux workspace.create returned no workspace id",
+			`cmux workspace.create failed for session '${session.name}': response returned no workspace id`,
 		);
-	await request("surface.send_text", {
+	await requestForSession("surface.send_text", session.name, {
 		workspace_id: createdRef,
 		text: ATTACH_COMMAND,
 	});
@@ -234,7 +246,10 @@ async function cmuxCommand(context: CommandContext): Promise<number> {
 	const selection = context.args.positionals[0];
 	try {
 		if (!selection) {
-			const workspaces = await request("workspace.list");
+			const workspaces = await requestForSession(
+				"workspace.list",
+				"all sessions",
+			);
 			context.stdout("All tp sessions:\n");
 			for (const [index, session] of sessions.entries()) {
 				const state = findWorkspaceRef(workspaces, session.name)
@@ -262,6 +277,9 @@ async function cmuxCommand(context: CommandContext): Promise<number> {
 						result = 1;
 						continue;
 					}
+					context.stderr(
+						error instanceof Error ? error.message : String(error),
+					);
 					result = 1;
 				}
 			}
@@ -283,6 +301,10 @@ async function cmuxCommand(context: CommandContext): Promise<number> {
 				} catch (error) {
 					if (error instanceof CmuxTransportError)
 						printConnectionGuidance(context);
+					else
+						context.stderr(
+							error instanceof Error ? error.message : String(error),
+						);
 					result = 1;
 				}
 			}
@@ -298,6 +320,8 @@ async function cmuxCommand(context: CommandContext): Promise<number> {
 			await openSession(context, sessions[index - 1]);
 		} catch (error) {
 			if (error instanceof CmuxTransportError) printConnectionGuidance(context);
+			else
+				context.stderr(error instanceof Error ? error.message : String(error));
 			return 1;
 		}
 		return 0;

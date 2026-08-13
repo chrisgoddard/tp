@@ -67,6 +67,37 @@ process.stdout.write("00000000-0000-4000-8000-000000000001\\n");
 	write("nohup", `${record}\n`);
 }
 
+function writeRemoteSetupStub(
+	kit: ReturnType<typeof createStubKit>,
+	resolvedDirectory: string,
+): string {
+	const commandLog = join(kit.directory, "ssh-commands.log");
+	const path = join(kit.directory, "ssh");
+	writeFileSync(
+		path,
+		`#!${process.execPath}
+import { appendFileSync } from "node:fs";
+const command = process.argv.at(-1) ?? "";
+appendFileSync(${JSON.stringify(commandLog)}, command + "\\n");
+if (command.includes("mkdir -p")) process.stdout.write(${JSON.stringify(resolvedDirectory)} + "\\n");
+`,
+	);
+	chmodSync(path, 0o755);
+	return commandLog;
+}
+
+function writeClipboardStub(
+	kit: ReturnType<typeof createStubKit>,
+	clipboardPath: string,
+): void {
+	const path = join(kit.directory, "pbcopy");
+	writeFileSync(
+		path,
+		`#!${process.execPath}\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(clipboardPath)}, await new Response(Bun.stdin.stream()).text());\n`,
+	);
+	chmodSync(path, 0o755);
+}
+
 function exists(path: string): boolean {
 	try {
 		statSync(path);
@@ -121,6 +152,65 @@ test("async reserves the clipboard before starting transport", async () => {
 		expect(commands.indexOf("nohup")).toBeGreaterThan(
 			commands.indexOf("pbcopy"),
 		);
+	} finally {
+		kit.cleanup();
+	}
+});
+
+test("ssh remote tilde paths are expanded by the remote shell safely", async () => {
+	const kit = createStubKit();
+	try {
+		const input = join(kit.directory, "input.png");
+		writeFileSync(input, "image");
+		const commandLog = writeRemoteSetupStub(kit, "/remote-home/screenshots");
+		const result = await runTpShot([input], {
+			env: {
+				...kit.env,
+				HOME: join(kit.directory, "local-home"),
+				TP_SHOT_REMOTE_DIR: `~/folder with "quotes" $() $VAR`,
+				TP_SHOT_NOTIFIER: "none",
+			},
+		});
+
+		expect(result.exitCode).toBe(0);
+		const setupCommand = readFileSync(commandLog, "utf8").split("\n")[0];
+		expect(setupCommand).toBe(
+			`umask 077; mkdir -p "$HOME"/'folder with "quotes" $() $VAR' && chmod 700 "$HOME"/'folder with "quotes" $() $VAR' && printf "%s\\n" "$HOME"/'folder with "quotes" $() $VAR'`,
+		);
+		expect(setupCommand).not.toContain(join(kit.directory, "local-home"));
+	} finally {
+		kit.cleanup();
+	}
+});
+
+test("async ssh copies the remote-resolved directory, not the local home", async () => {
+	const kit = createStubKit();
+	try {
+		const input = join(kit.directory, "input.png");
+		const clipboard = join(kit.directory, "clipboard");
+		const logs = join(kit.directory, "logs");
+		mkdirSync(logs);
+		writeFileSync(input, "image");
+		writeClipboardStub(kit, clipboard);
+		writeRemoteSetupStub(kit, "/remote-home/screenshots");
+		const result = await runTpShot(["--async", input], {
+			env: {
+				...kit.env,
+				HOME: join(kit.directory, "local-home"),
+				TP_SHOT_LOG_DIR: logs,
+				TP_SHOT_REMOTE_DIR: "~/screenshots",
+				TP_SHOT_NOTIFIER: "none",
+			},
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(readFileSync(clipboard, "utf8")).toMatch(
+			/^\/remote-home\/screenshots\/tp-shot-/,
+		);
+		expect(readFileSync(clipboard, "utf8")).not.toContain("local-home");
+		const logPath = result.stdout.match(/^Log: (.+)$/m)?.[1];
+		if (!logPath) throw new Error("async output did not include a log path");
+		await waitForText(logPath, "Ready:");
 	} finally {
 		kit.cleanup();
 	}
