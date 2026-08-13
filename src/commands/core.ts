@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { type CommandContext, registerCommandHandler } from "../lib/cli";
 import { configPath, loadConfig } from "../lib/config";
+import { createLayoutSession } from "../lib/layout";
 import { stampSshSource } from "../lib/origin";
 import {
 	nextNumber,
@@ -150,6 +151,7 @@ function createSession(
 		recordCommand?: readonly string[];
 		shell?: string;
 		number?: number;
+		layout?: { name: string; value: unknown };
 	} = {},
 ): CreatedSession {
 	const project = projectName();
@@ -175,11 +177,18 @@ function createSession(
 		environment.TP_CLOSE_OUTPUT = outputPath;
 		environment.TP_CMD = serializeCommand(options.recordCommand ?? command);
 	}
-	newSession(name, {
-		cwd: process.cwd(),
-		command: tmuxCommandArgs,
-		environment,
-	});
+	if (options.layout) {
+		createLayoutSession(name, options.layout.name, options.layout.value, {
+			cwd: process.cwd(),
+			shell: options.shell ?? shellForCommand(),
+		});
+	} else {
+		newSession(name, {
+			cwd: process.cwd(),
+			command: tmuxCommandArgs,
+			environment,
+		});
+	}
 	if (options.label !== undefined) {
 		try {
 			setOption(name, "@tp_name", options.label);
@@ -253,12 +262,45 @@ function nextSession(context: CommandContext): number | Promise<number> {
 		typeof context.args.options.name === "string"
 			? context.args.options.name
 			: undefined;
+	const layoutName =
+		typeof context.args.options.layout === "string"
+			? context.args.options.layout
+			: undefined;
+	if (layoutName !== undefined && context.args.positionals.length) {
+		context.stderr("tp new: --layout cannot be combined with a command");
+		return 2;
+	}
+	if (layoutName !== undefined) {
+		const config = loadConfig();
+		const layout = config.layouts[layoutName];
+		if (layout === undefined) {
+			const names = Object.keys(config.layouts);
+			context.stderr(
+				`Unknown layout '${layoutName}'. Available layouts: ${names.length ? names.join(", ") : "(none)"}`,
+			);
+			return 2;
+		}
+		const created = createSession([], {
+			label,
+			layout: { name: layoutName, value: layout },
+		});
+		return attachSession(created.name, context);
+	}
 	const command = context.args.positionals;
 	const created = createSession(command, { label });
 	return attachSession(created.name, context, created.outputPath);
 }
 
 function piCommand(context: CommandContext): number | Promise<number> {
+	if (
+		!context.args.delimited &&
+		context.args.passthrough.some(
+			(argument) => argument === "--layout" || argument.startsWith("--layout="),
+		)
+	) {
+		context.stderr("tp pi: --layout is not supported");
+		return 2;
+	}
 	const label =
 		typeof context.args.options.name === "string"
 			? context.args.options.name
