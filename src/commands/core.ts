@@ -18,6 +18,7 @@ import {
 	projectName,
 	sessionName,
 } from "../lib/project";
+import { expandRemoteDir } from "../lib/shot";
 import { recordSessionsSnapshot } from "../lib/snapshot";
 import {
 	attach,
@@ -456,7 +457,7 @@ function screenshotDirectory(): string {
 	if (process.env.TP_SHOT_DIR) return process.env.TP_SHOT_DIR;
 	const config = loadConfig();
 	return (
-		config.shot.remote_dir ||
+		expandRemoteDir(config.shot.remote_dir, process.env) ||
 		join(process.env.HOME || process.cwd(), ".cache", "pi", "screenshots")
 	);
 }

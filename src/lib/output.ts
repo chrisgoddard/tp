@@ -11,6 +11,7 @@ export type ColourMode = "always" | "never";
 
 export interface ColourOptions {
 	env?: Record<string, string | undefined>;
+	configColor?: string;
 	isTTY?: boolean;
 }
 
@@ -29,10 +30,8 @@ const ANSI: Record<ColourName, string> = {
 	red: "\u001b[31m",
 	normal: "\u001b[0m",
 };
-export function colourMode(options: ColourOptions = {}): ColourMode {
-	const env = options.env ?? process.env;
-	if (Object.prototype.hasOwnProperty.call(env, "NO_COLOR")) return "never";
-	const requested = env.TP_COLOR?.toLowerCase();
+function requestedColour(value: string | undefined): ColourMode | undefined {
+	const requested = value?.toLowerCase();
 	if (
 		requested === "always" ||
 		requested === "1" ||
@@ -47,6 +46,16 @@ export function colourMode(options: ColourOptions = {}): ColourMode {
 		requested === "false"
 	)
 		return "never";
+	return undefined;
+}
+
+export function colourMode(options: ColourOptions = {}): ColourMode {
+	const env = options.env ?? process.env;
+	if (Object.prototype.hasOwnProperty.call(env, "NO_COLOR")) return "never";
+	const environmentColour = requestedColour(env.TP_COLOR);
+	if (environmentColour !== undefined) return environmentColour;
+	const configColour = requestedColour(options.configColor);
+	if (configColour !== undefined) return configColour;
 	if (env.TERM === "dumb") return "never";
 	return (options.isTTY ?? Boolean(process.stdout.isTTY)) ? "always" : "never";
 }

@@ -1,4 +1,5 @@
 import { type CommandContext, registerCommandHandler } from "../lib/cli";
+import { loadConfig } from "../lib/config";
 import {
 	type ParsedListingSession,
 	byRecent,
@@ -83,7 +84,7 @@ function draw(
 	query: string,
 	selected: number,
 ): void {
-	const enabled = colorEnabled();
+	const enabled = colorEnabled({ configColor: loadConfig().color });
 	const width = Math.max(20, Math.min(terminalWidth(), COMPACT_WIDTH));
 	write("\u001b[2J\u001b[H");
 	write(`tp pop${query ? `  filter: ${query}` : ""}\n`);

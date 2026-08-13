@@ -1,4 +1,5 @@
 import { type CommandContext, registerCommandHandler } from "../lib/cli";
+import { loadConfig } from "../lib/config";
 import {
 	type ParsedListingSession,
 	byProjectAndNumber,
@@ -157,7 +158,7 @@ async function lsCommand(
 		);
 		return 0;
 	}
-	const enabled = colorEnabled();
+	const enabled = colorEnabled({ configColor: loadConfig().color });
 	context.stdout(`Sessions for '${project}':\n`);
 	for (const item of items)
 		context.stdout(
@@ -231,7 +232,7 @@ async function globalCommand(
 	context.stdout(
 		`${prefix ? `Tp sessions for '${prefix}':` : "All tp sessions:"}\n`,
 	);
-	const enabled = colorEnabled();
+	const enabled = colorEnabled({ configColor: loadConfig().color });
 	items.forEach((item, offset) =>
 		context.stdout(
 			`${renderListingLine(item, "global", offset + 1, devices.get(item.session.name) ?? null, terminalWidth(), enabled)}\n`,
@@ -253,7 +254,7 @@ async function allCommand(
 		parsed.filter((item): item is ParsedListingSession => item !== undefined),
 		dependencies,
 	);
-	const enabled = colorEnabled();
+	const enabled = colorEnabled({ configColor: loadConfig().color });
 	for (const [offset, session] of items.entries()) {
 		const item = parsed[offset];
 		if (item)

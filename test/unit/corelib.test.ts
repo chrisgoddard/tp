@@ -170,13 +170,31 @@ describe("Pi metadata", () => {
 });
 
 describe("output", () => {
-	test("NO_COLOR wins over TP_COLOR=always and plain mode strips ANSI", () => {
-		expect(
-			colorMode({ env: { NO_COLOR: "", TP_COLOR: "always" }, isTTY: true }),
-		).toBe("never");
-		expect(colorMode({ env: { TP_COLOR: "always" }, isTTY: false })).toBe(
+	test("colour precedence is NO_COLOR, TP_COLOR, config, then TTY", () => {
+		expect(colorMode({ env: {}, configColor: "always", isTTY: false })).toBe(
 			"always",
 		);
+		expect(
+			colorMode({
+				env: { NO_COLOR: "", TP_COLOR: "always" },
+				configColor: "always",
+				isTTY: true,
+			}),
+		).toBe("never");
+		expect(
+			colorMode({
+				env: { TP_COLOR: "always" },
+				configColor: "never",
+				isTTY: false,
+			}),
+		).toBe("always");
+		expect(
+			colorMode({
+				env: { TP_COLOR: "never" },
+				configColor: "always",
+				isTTY: true,
+			}),
+		).toBe("never");
 		expect(colorMode({ env: {}, isTTY: true })).toBe("always");
 		expect(colorMode({ env: {}, isTTY: false })).toBe("never");
 		expect(stripAnsi(colorize("x", "red"))).toBe("x");

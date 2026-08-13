@@ -1,4 +1,5 @@
 import { type CommandContext, registerCommandHandler } from "../lib/cli";
+import { loadConfig } from "../lib/config";
 import {
 	type ParsedListingSession,
 	byProjectAndNumber,
@@ -93,7 +94,7 @@ function renderListing(
 	scope: Scope,
 	redraw = false,
 ): string {
-	const enabled = colorEnabled();
+	const enabled = colorEnabled({ configColor: loadConfig().color });
 	const lines: string[] = [];
 	if (items.length === 0) {
 		lines.push(
