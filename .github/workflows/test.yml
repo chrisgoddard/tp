@@ -8,15 +8,41 @@ permissions:
   contents: read
 
 jobs:
-  fish:
+  legacy-fish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
+      - name: Install legacy dependencies
         run: sudo apt-get update && sudo apt-get install --yes fish tmux jq
       - name: Check Fish syntax
-        run: fish -n functions/*.fish completions/*.fish tests/*.fish
-      - name: Run tests
+        run: fish -n legacy/functions/*.fish legacy/completions/*.fish legacy/tests/*.fish
+      - name: Run legacy tests
         run: |
-          fish tests/test_tp.fish
-          fish tests/test_tp_shot.fish
+          fish legacy/tests/test_tp.fish
+          fish legacy/tests/test_tp_shot.fish
+
+  ts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install fish and tmux
+        run: |
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes fish tmux
+          else
+            brew install fish tmux
+          fi
+      - name: Install dependencies
+        run: bun install
+      - name: Check TypeScript package
+        run: bun run check
+      - name: Run end-to-end tests
+        run: bun run test:e2e
+      - name: Run differential parity tests
+        run: bun run test:parity

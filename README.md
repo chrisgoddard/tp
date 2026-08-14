@@ -1,417 +1,606 @@
 # tp
 
-`tp` is a project-oriented tmux session manager for the [Fish shell](https://fishshell.com/). It gives each directory a predictable set of numbered tmux sessions, making it quick to create, switch, list, label, and remove project terminals.
+`tp` is a standalone, project-oriented tmux session manager. It gives each
+working directory a predictable set of numbered tmux sessions, so you can
+create, attach, label, list, and remove project terminals quickly. It is a
+Bun binary: **Fish is not required**. `tp new` runs commands with `$SHELL` by
+default.
 
-Sessions are named from the current directory and a zero-padded number. Running `tp` from a directory named `website`, for example, creates or attaches to `website_001`.
+A project named `website` gets sessions such as `website_001` and
+`website_002`. Numbers are sorted numerically and padded to three digits.
 
 ## Requirements
 
-- [Fish](https://fishshell.com/)
-- [tmux](https://github.com/tmux/tmux)
-- Optional: [cmux](https://github.com/manaflow-ai/cmux) and [`jq`](https://jqlang.github.io/jq/) for the `tp cmux` integration
-- For screenshot sharing: a macOS capture computer with `ssh` access to the remote computer
-- Optional: [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) for reliable background upload notifications
+- [Bun](https://bun.sh/), version 1.1 or newer
+- [tmux](https://github.com/tmux/tmux), version 3.2 or newer
+- Optional: [cmux](https://github.com/manaflow-ai/cmux) with socket automation
+- Required by `tp origin`: [Tailscale](https://tailscale.com/) CLI; optional otherwise
+- macOS, SSH access, and a notification tool for `tp-shot`
 
-## Installation
+## Install
 
-### Fisher
+The v0.2 install is from a clone. Install Bun first, then:
 
-Install [Fisher](https://github.com/jorgebucaran/fisher), then install this plugin:
+```sh
+git clone https://github.com/chrisgoddard/tp.git
+cd tp
+bun install
+bun add -g "file:$PWD"
+```
+
+Use the absolute `file:` URL above. Do not use `bun install -g .` (it fails
+with `error: Package "@" has a dependency loop ... (DependencyLoop)`) or bare
+`bun add --global .` (it can resolve a stale clone). `bun add -g "file:$PWD"`
+installs both `tp` and `tp-shot` while linking
+the package files back to this checkout. Bun itself prints a Fish PATH hint
+when its global bin directory is not already on `PATH`.
+
+Bun's global bin directory must be on `PATH`. Ask Bun where it is with
+`bun pm bin -g`; the usual default is `$HOME/.bun/bin`. For a default Bun
+installation, add it to Fish and to Bash or Zsh like this:
 
 ```fish
-fisher install chrisgoddard/tp
+mkdir -p ~/.bun/bin
+fish_add_path ~/.bun/bin
 ```
 
-Upgrade it later with:
-
-```fish
-fisher update chrisgoddard/tp
+```sh
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+export PATH="$BUN_INSTALL/bin:$PATH"
 ```
 
-Remove it with:
+Do not use `bun link` as the install command. `bun link` registers the package
+for project-local linking (`bun link @chrisgoddard/tp` inside another project);
+it does not configure `PATH`, and the earlier `bun install && bun link`
+instructions did not install the CLI reliably.
 
-```fish
-fisher remove chrisgoddard/tp
+Check the installation from any directory with:
+
+```sh
+command -v tp
+command -v tp-shot
+tp version
+tp-shot --version
+tp doctor
 ```
 
-### Local development installation
+Uninstall it with:
 
-To use a local clone directly, remove the Fisher-managed copy and link the clone's Fish files into your user configuration. Changes in the clone then take effect without reinstalling the plugin:
-
-```fish
-fisher remove chrisgoddard/tp
-
-for kind in functions completions
-    mkdir -p "$__fish_config_dir/$kind"
-    for source in $kind/*.fish
-        ln -sfn (path resolve "$source") "$__fish_config_dir/$kind/"(path basename "$source")
-    end
-end
-
-# Reload the newly linked functions and completions in this shell.
-source "$__fish_config_dir/functions/tp.fish"
-source "$__fish_config_dir/functions/tp-shot.fish"
-source "$__fish_config_dir/completions/tp.fish"
-source "$__fish_config_dir/completions/tp-shot.fish"
+```sh
+bun remove -g @chrisgoddard/tp
 ```
 
-Run this from the root of the local `tp` clone. The links are user-wide, so new Fish shells also use the clone automatically.
+### Manual symlink fallback
 
-### Manual installation
+If `bun add -g "file:$PWD"` is unavailable or fails, install symlinks to the
+checkout manually:
 
-Copy the function and completion files into your Fish configuration:
-
-```fish
-git clone https://github.com/chrisgoddard/tp.git /tmp/tp
-cp /tmp/tp/functions/*.fish ~/.config/fish/functions/
-cp /tmp/tp/completions/*.fish ~/.config/fish/completions/
-rm -rf /tmp/tp
+```sh
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+BUN_BIN="$(bun pm bin -g 2>/dev/null || printf '%s/bin' "$BUN_INSTALL")"
+mkdir -p "$BUN_BIN"
+chmod +x src/bin/tp.ts src/bin/tp-shot.ts
+ln -sf "$PWD/src/bin/tp.ts" "$BUN_BIN/tp"
+ln -sf "$PWD/src/bin/tp-shot.ts" "$BUN_BIN/tp-shot"
 ```
 
-Start a new Fish shell after installing.
+Both the native install and this fallback point at the checkout, so they keep
+working after `git pull`, including when an updated command imports a new file.
+`tp update` continues to operate on the clone. Publishing an npm package is
+planned; it is not available yet.
 
-## Usage
+## Command reference
 
-```text
-tp                            Attach to the first project session, or create 001
-tp new                        Create and attach to the next numbered session
-tp new --name api             Create the next session and label it "api"
-tp new command arguments      Create a session that runs a command
-tp pi                         Create the next session and run Pi in it
-tp pi --name auth             Name both the tmux session and the Pi session "auth"
-tp pi --update-first          Update Pi and its extensions before running Pi
-tp pi --model sonnet:high     Pass all other arguments directly to Pi
-tp 2                          Attach to session 002, creating it if needed
-tp 2 --restart                Restart session 002's Pi, resuming the same conversation
-tp last                       Attach to the highest-numbered project session
-tp ls                         List sessions for the current project, with any Pi session id
-tp name 2 api                 Set or replace the label on session 002
-tp sid 2                      Print the full Pi session id running in session 002
-tp kill 2                     Kill project session 002
-tp kill                       Kill every session for the current project
-tp shot                       Print the newest uploaded screenshot path
-tp shot list 5                Print the five newest screenshot paths
-tp shot dir                   Print the screenshot upload directory
-tp global                     List tp sessions across all projects
-tp global 3                   Attach to item 3 in the global list
-tp global 3 --restart         Restart item 3's Pi, resuming the same conversation
-tp all                        List every tmux session
-tp cmux                       Show tp sessions and their cmux state
-tp cmux 3                     Open or focus item 3 in cmux
-tp cmux website               Open sessions whose names start with "website"
-tp cmux all                   Open or focus every tp session in cmux
-```
+The complete `tp help` command list is below. Aliases are shown in parentheses.
 
-Common commands also have short aliases:
-
-| Command | Alias |
+| Command | Purpose |
 | --- | --- |
-| `new` | `n` |
-| `pi` | `p` |
-| `last` | `l` or `-` |
-| `kill` | `k` |
-| `global` | `g` |
-| `cmux` | `c` |
-| `all` | `a` |
+| `tp new` (`n`) | Create the next numbered project session |
+| `tp pi` (`p`) | Create a session and run Pi |
+| `tp last` (`l`, `-`) | Attach to the last project session |
+| `tp ls` (`list`) | List sessions for the current project |
+| `tp kill` (`k`) | Kill one or all project sessions |
+| `tp name` | Set a session label |
+| `tp sid` | Print a Pi session id |
+| `tp shot` | Find uploaded screenshots |
+| `tp global` (`g`) | List or attach to sessions across projects |
+| `tp all` (`a`) | List every tmux session |
+| `tp cmux` (`c`) | Open or focus sessions in cmux |
+| `tp w` | Watch sessions live |
+| `tp b` | Attach to a blocked session |
+| `tp status` | Show session status counts |
+| `tp origin` | Show the current SSH origin |
+| `tp doctor` | Check the tp environment |
+| `tp update` | Update tp from its git clone |
+| `tp bind` | Install tp tmux bindings |
+| `tp pop` | Open the session picker |
+| `tp restore` | Restore sessions after reboot |
+| `tp completions` | Print a shell completion shim |
+| `tp help` | Show help |
+| `tp version` | Show the version |
 
-### Run a command in a new session
+Global `tp -h`/`--help` prints the command list. Global `tp -V`/`--version`
+prints the version. Every command accepts `-h` or `--help` where its help text
+lists that option. The command resolver tries an exact command or alias, a
+session number, and then
+a unique label prefix. A label that has the same name as a command cannot be
+reached by that name.
 
-Arguments after `tp new` are run inside the new session under Fish:
+### Create and attach
 
-```fish
-tp new pi
+```sh
+tp
+tp new
 tp new --name server npm run dev
-```
-
-When that command exits, `tp` preserves and replays the pane's final output in the calling terminal.
-
-### Run Pi in a new session
-
-`tp pi` (short form: `tp p`) is the Pi-specific form of `tp new pi`:
-
-```fish
+tp new --layout dev
 tp pi
-tp pi --name "auth refactor"
-tp p -n "release audit" --thinking high "Review the release changes"
+tp pi --name auth --model sonnet:high
+tp 2
+tp 2 --restart
+tp project-api
+tp last
 ```
 
-`--name` / `-n` labels the tmux session and passes the same display name to Pi. `--update-first` / `-uf` runs `pi update --all` first and launches Pi only if the update succeeds:
+`tp` attaches to the first project session and creates `001` when needed.
+`tp new` creates the next session. Arguments after `new` run under `$SHELL`;
+set `TP_SHELL` or `shell` in the config to use another shell. `tp pi` runs Pi;
+`--name`/`-n` labels both the tmux and Pi sessions, and
+`--update-first`/`-uf` runs `pi update --all` before launch. Other `pi`
+arguments keep their original boundaries. Use `--` when an argument must go
+only to Pi.
 
-```fish
-tp pi -uf --name "upgrade follow-up"
+A number attaches to that project session, creating it if it does not exist.
+A label attaches by exact or unique prefix. `--restart` stops a live Pi and
+starts it with the same conversation. It refuses to act when there is no live
+Pi or no saved conversation.
+
+### List, label, and kill
+
+```sh
+tp ls
+tp ls --json
+tp name 2 api-work
+tp sid
+tp sid 2
+tp kill 2
+tp kill --force
+tp shot
+tp shot list 5
+tp shot dir
+tp global
+tp g work
+tp g work 2
+tp g 3
+tp g --recent
+tp g --json
+tp all
 ```
 
-Every other argument is passed to Pi with its original argument boundaries intact. Use `--` to stop `tp pi` from interpreting its own options; everything after it goes only to Pi.
+`tp name <number> <label>` sets or replaces a label. `tp sid` with no number
+uses the current pane when inside a tp session. It exits nonzero if no Pi id is
+available. Bare `tp kill` asks `y/N` on a terminal. Use `--force`/`-f` for
+non-interactive use; a non-TTY invocation without it is a usage error.
 
-## Share laptop screenshots with a remote Pi session
+`tp shot` prints the newest image path. `tp shot list [count]` lists images
+(the default count is 10), and `tp shot dir` prints the directory. The
+screenshot directory is the configured remote directory or
+`~/.cache/pi/screenshots`.
 
-`tp-shot` solves the local-path problem in remote sessions. It uses the same macOS interactive capture interface as the normal screenshot keys, uploads the image over SSH, and copies only the remote path to the laptop clipboard. Images land in `~/.cache/pi/screenshots/` on the remote computer. The directory and image are restricted to the remote account.
+`tp global` is also `tp g`. A non-numeric first argument filters by project
+prefix; a second number selects within that filtered list. An all-digit
+argument is always a global list index. `--recent` sorts by tmux activity and
+`--json` emits the listing schema described below. `tp ls --json` emits the
+same schema for the current project. JSON is uncolored and goes to stdout.
 
-Synchronous mode is the default. It waits for the upload, then copies the final path and reports success:
+`tp cmux` is also `tp c`. With no selector it lists tp sessions and their cmux
+state; a number selects a global item, a project prefix selects matching
+sessions, and `all` opens every tp session. cmux socket automation must be
+enabled first (see below).
+
+```sh
+tp cmux
+tp cmux 3
+tp cmux website
+tp cmux all
+```
+
+### Watch, attach, and status
+
+```sh
+tp w
+tp w --global
+tp g --watch
+tp b
+tp b --global
+tp status
+tp status --global
+tp status --tmux -g
+tp status --json
+```
+
+`tp w` refreshes the current-project listing every two seconds until a key is
+pressed. `tp g -w` watches all projects. Both need a terminal. `tp b` attaches
+to the only blocked session, lists blocked sessions and exits 1 when there are
+several, and exits 1 with `nothing blocked` when there are none.
+
+`tp status` prints counts such as `2 blocked · 3 busy · 4 idle`. If sessions
+exist but none publishes Pi state, plain and `--tmux` output are blank. `-g`
+includes all projects. `--tmux` prints a status-line segment with tmux color
+formats; `--json` still reports `{blocked,busy,idle,total}`.
+
+### Origin, diagnostics, and maintenance
+
+```sh
+tp origin
+tp origin --json
+tp doctor
+tp doctor --json
+tp update --check
+tp update
+tp bind --print
+tp bind
+tp pop
+tp restore --list
+tp restore --project website
+tp restore
+```
+
+`tp origin` requires the Tailscale CLI. When Tailscale whois resolves the
+current, verified SSH origin, the output includes hostname and user;
+`--json` returns `hostname`, `user`, `ip`, and `createdFresh`. A stale mapping
+reports `createdFresh=false` and still exits 0. `tp doctor` runs environment
+checks and returns nonzero when a required check fails. `doctor --json` returns
+11 checks, each with `id`, `status` (`pass`, `fail`, or `skip`), and `detail`.
+
+`tp update` is for a clean git-clone install with an upstream branch. It runs a
+fast-forward-only pull and installs dependencies; `--check` only compares the
+clone with its upstream. `tp bind` writes
+`~/.config/tp/tmux.conf` (or the equivalent XDG path), prints it, and prints a
+`source-file` command. `--print` prints the generated config without writing.
+
+`tp pop` opens a tmux `display-popup` session picker when called inside tmux;
+its picker supports filtering, arrow keys, Ctrl-N/Ctrl-P, Enter, and Escape or
+`q`. It needs tmux 3.2 or newer. `tp restore` reads the saved snapshot, skips
+sessions that already exist, and resumes Pi conversations when their session
+files are available. `--list` prints the saved JSON records and `--project`
+filters them.
+
+## Shell completions
+
+The generated shims call the hidden `tp __complete` protocol. Install one for
+your shell:
+
+### Fish
+
+Source it for the current shell:
 
 ```fish
+tp completions fish | source
+```
+
+Install it for future shells:
+
+```fish
+mkdir -p ~/.config/fish/completions
+tp completions fish > ~/.config/fish/completions/tp.fish
+```
+
+### Bash
+
+```sh
+tp completions bash >> ~/.bash_completion
+```
+
+Start a new Bash shell or source `~/.bash_completion`.
+
+### Zsh
+
+```sh
+mkdir -p ~/.zsh/completions
+tp completions zsh > ~/.zsh/completions/_tp
+```
+
+Add `~/.zsh/completions` to `fpath` before compinit, then start a new Zsh
+shell or run `autoload -Uz compinit && compinit`.
+
+The shim also supplies static `tp-shot` flags in Fish. The hidden
+`tp __complete` command is internal and is not part of the public command list.
+
+## tmux status line and bindings
+
+Add the status segment to tmux's `status-right`:
+
+```sh
+tp status --tmux -g
+```
+
+For example, this tmux setting runs the command when tmux redraws the status:
+
+```tmux
+set -g status-right '#(tp status --tmux -g)'
+```
+
+Install tp's bindings and source the generated file:
+
+```sh
+tp bind
+```
+
+Then run the printed `source-file ~/.config/tp/tmux.conf` command (or source
+the path it prints when `XDG_CONFIG_HOME` is set). The generated bindings are:
+
+- `prefix T` opens `tp pop` in a popup.
+- `prefix B` runs `tp b -g` to attach a blocked session.
+- Window status formats show Pi blocked, tool, thinking, and idle markers.
+
+## Configuration
+
+The configuration file is `~/.config/tp/config.toml`, or
+`$XDG_CONFIG_HOME/tp/config.toml` when `XDG_CONFIG_HOME` is set. Precedence is
+**flag > environment > file > default**. Unknown top-level and `shot.*` keys
+are warned about. Extra layout and window fields are ignored.
+
+### Environment variables
+
+| Variable | Meaning |
+| --- | --- |
+| `TP_SHELL` | Shell for commands passed to `tp new`. |
+| `TP_COLOR` | `always`, `never`, or `auto`; `NO_COLOR` overrides it. |
+| `NO_COLOR` | Disable color for all output. |
+| `TP_TMUX_SOCKET` | Use the named tmux socket; useful for isolated test servers. |
+| `TP_SHOT_HOST` | SSH host or alias for `tp-shot` (default `good-studio`). |
+| `TP_SHOT_REMOTE_DIR` | Remote Pi-host directory. SSH accepts absolute paths, `~`, or `~/...`; Taildrive should use an explicit absolute Pi-host path. |
+| `TP_SHOT_NOTIFIER` | `auto`, `terminal-notifier`, `osascript`, or `none`. |
+| `TP_SHOT_TRANSPORT` | `ssh` or `taildrive`. |
+| `TP_SHOT_DIR` | Override the directory searched by `tp shot`. |
+| `TP_SHOT_LOG_DIR` | Override the local directory for async `tp-shot` logs. |
+| `TP_UPDATE_ROOT` | Override the clone root used by `tp update`. |
+
+`TP_COLOR=always` forces colors through a pipe; `TP_COLOR=never` disables
+colors. The precedence is `NO_COLOR`, then `TP_COLOR`, then terminal
+ detection.
+
+### `config.toml`
+
+| Key | Type and meaning |
+| --- | --- |
+| `shell` | String. Shell for `tp new`; defaults to `$SHELL`. If `$SHELL` is unset, `tp new` uses `sh` when no config file exists and `fish` when the file exists. |
+| `color` | String. `auto`, `always`, or `never`; defaults to `auto`. |
+| `shot.host` | String. SSH host or alias; defaults to `good-studio`. |
+| `shot.remote_dir` | String. Remote Pi-host directory. SSH defaults to remote `~/.cache/pi/screenshots` and accepts absolute paths, `~`, or `~/...`; Taildrive should be given the explicit absolute Pi-host path. |
+| `shot.taildrive_dir` | String. Locally mounted Taildrive share directory; unset by default and required for `taildrive`. |
+| `shot.notifier` | String. `auto`, `terminal-notifier`, `osascript`, or `none`; defaults to `auto`. |
+| `shot.transport` | String. `ssh` (default) or `taildrive`. |
+| `layouts.<name>.windows` | Array of window tables. A layout must contain this array. |
+| `layouts.<name>.windows[].name` | String. Required window or pane name. |
+| `layouts.<name>.windows[].cmd` | String, optional. Command run by the configured shell. |
+| `layouts.<name>.windows[].split` | `"h"` or `"v"`, optional. Split the previous window's pane; the first entry cannot split. |
+
+Environment equivalents are `TP_SHELL`, `TP_COLOR`, `TP_SHOT_HOST`,
+`TP_SHOT_REMOTE_DIR`, `TP_SHOT_NOTIFIER`, and `TP_SHOT_TRANSPORT`.
+`shot.taildrive_dir` and layouts have no environment equivalent. No layouts are
+defined by default.
+
+Example:
+
+```toml
+shell = "/bin/zsh"
+color = "auto"
+
+[shot]
+host = "good-studio"
+remote_dir = "/home/pi/.cache/pi/screenshots"
+transport = "ssh"
+notifier = "auto"
+
+[layouts.dev]
+windows = [
+  { name = "edit", cmd = "vim" },
+  { name = "server", cmd = "bun run dev" },
+  { name = "logs", split = "h", cmd = "tail -f app.log" },
+]
+```
+
+## cmux integration
+
+`tp cmux` uses cmux socket automation. Enable **Socket Control Mode →
+Automation** in cmux settings. `tp` talks to the socket directly; **jq is not
+required**.
+
+## Migration from Fisher
+
+The old Fish plugin is frozen in [`legacy/`](legacy/). It is retained as a
+parity reference and will be removed after v0.2 ships.
+
+Remove the plugin before installing the standalone binary:
+
+```fish
+fisher remove chrisgoddard/tp
+functions --erase tp tp-shot
+rm -f ~/.config/fish/functions/tp.fish ~/.config/fish/functions/tp-shot.fish
+```
+
+Fish functions take precedence over `PATH`, so a leftover function named `tp`
+(or `tp-shot`) shadows the standalone binary. Run `functions --erase` in the
+current Fish session. If the functions return in a new session, delete their
+files at `~/.config/fish/functions/tp.fish` and
+`~/.config/fish/functions/tp-shot.fish`. Then install Bun and follow the clone
+installation above. After installation, verify that Fish resolves the
+binaries, not functions:
+
+```fish
+type -a tp tp-shot
+command -v tp
+```
+
+If `type -a tp tp-shot` still shows a function, start a fresh Fish session and
+run those checks again. Do not link the old `functions/` or `completions/`
+files into your Fish configuration. The new `tp` and `tp-shot` executables
+work from Fish, Bash, Zsh, or another supported shell.
+
+## tp-shot: direct-binary screenshot uploads
+
+`tp-shot` captures a macOS interactive screenshot, uploads it, and copies the
+remote path to the clipboard. Use `-h`/`--help` for usage and
+`-V`/`--version` for the version. SSH is the default transport. Synchronous
+mode waits for the upload:
+
+```sh
 tp-shot
 tp-shot ~/Desktop/Screenshot.png
 ```
 
-Async mode reserves a UUID-based final path, copies it immediately, and uploads in a detached worker:
+Async mode copies a reserved path immediately and uploads in a detached worker:
 
-```fish
+```sh
 tp-shot --async
 tp-shot --async ~/Desktop/Screenshot.png
-```
-
-The detached worker waits for the foreground process to transfer cleanup ownership before it starts SSH. It then uploads to a hidden temporary file, sets private permissions, and moves the complete file to the copied final path in one filesystem operation. An explicit input image is copied to a private local snapshot before the command returns, so later edits to the original cannot change the upload. A macOS notification reports when the path is ready or when the upload failed. Each upload writes a private log under `~/.cache/tp-shot/` on the laptop.
-
-Paste the copied path into Pi with Command-V. Pi receives a path on the computer where it is running, so it can read the image directly. If async upload is still running, a Pi installation with the `wait_for_screenshot` tool can wait briefly and return the uploaded image directly instead of treating the missing path as a permanent error.
-
-The ordinary Command-Shift-4 shortcut only saves an image or places image data on the laptop clipboard. Neither is visible to a process running on another computer. `tp-shot` adds the SSH transfer and puts a remote text path on the clipboard instead. It does not replace the ordinary shortcut.
-
-### First-time setup
-
-Install `tp` with Fisher on both computers:
-
-```fish
-fisher install chrisgoddard/tp
-```
-
-If it is already installed, update it instead:
-
-```fish
-fisher update chrisgoddard/tp
-```
-
-On the laptop, choose the SSH host used for uploads:
-
-```fish
-set -Ux TP_SHOT_HOST good-studio
-```
-
-`good-studio` is already the default. You can instead use `100.79.250.86` or `good-kiwi-studio.tail1fe17.ts.net`.
-
-Before using a keyboard shortcut, connect once in a terminal so SSH can confirm the host and credentials:
-
-```fish
-ssh good-studio true
-```
-
-Test notifications before relying on async mode:
-
-```fish
 tp-shot --notify-test
 ```
 
-The helper uses `terminal-notifier` when available and falls back to `osascript` if it is missing or fails. If the test does not appear, allow notifications for the relevant app in macOS System Settings. You can install the preferred notifier with `brew install terminal-notifier`. Set `TP_SHOT_NOTIFIER=none` only when you intentionally want log-only outcomes; `--notify-test` then reports that notifications are disabled.
+Use `--host HOST` to override the SSH host and `--transport ssh|taildrive` to
+choose a transport. Uploads stay private. Async uploads and both Taildrive
+modes publish atomically; synchronous SSH writes directly to a private final
+path. Async logs use `$TP_SHOT_LOG_DIR`, then `$XDG_CACHE_HOME/tp-shot`, then
+`~/.cache/tp-shot`. Notifications use `terminal-notifier` when available and
+fall back to `osascript`; `TP_SHOT_NOTIFIER=none` disables them.
 
-Then test both upload modes from a laptop terminal:
+### macOS Shortcuts
 
-```fish
-# Wait for upload before returning
-tp-shot
+For a keyboard shortcut, create a macOS Shortcut with **Run Shell Script**. Set
+Bun's path explicitly and call the installed binary directly:
 
-# Copy the final path immediately; notify when it becomes ready
-tp-shot --async
+```sh
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+export PATH="$BUN_INSTALL/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+exec "$BUN_INSTALL/bin/tp-shot" --async
 ```
 
-Select a region or window. After the ready notification appears, paste into Pi. Use `tp shot` on the remote computer if you lose the copied path. `tp shot list` shows the ten most recent uploads.
+Do not invoke `fish -lc`; no shell plugin is needed. Enable **Use as Quick
+Action**, assign a shortcut, and allow screen-capture permission. Set up
+key-based or Tailscale SSH access first because the uploader is non-interactive.
 
-Async mode assumes the laptop and remote account use the same absolute screenshot directory. If they do not, configure the remote path on the laptop:
+### SSH setup
 
-```fish
-set -Ux TP_SHOT_REMOTE_DIR /Users/remote-user/.cache/pi/screenshots
+The default host is `good-studio`. Override it in the environment or config:
+
+```sh
+export TP_SHOT_HOST=good-studio
+ssh good-studio true
+tp-shot --notify-test
 ```
 
-### Add a separate macOS keyboard shortcut
+For async SSH mode, the laptop's `TP_SHOT_REMOTE_DIR` may be an absolute path,
+`~`, or `~/...`; the remote resolves `~`. `tp-shot` copies that remote path, not
+a local path. Taildrive should use the explicit absolute Pi-host path. The
+normal screenshot shortcut remains unchanged.
 
-Keep Command-Shift-4 unchanged and assign another key combination to `tp-shot`:
+### Taildrive setup
 
-1. Open **Shortcuts** and create a new shortcut named **Screenshot for Pi**.
-2. Add **Run Shell Script**.
-3. In a laptop terminal, find the absolute path to Fish:
+The Tailscale bridge mounts a Taildrive share on the capture Mac. The
+[pi-caair-dev-tools tailscale-bridge documentation](https://gitlab.intel.com/pi/pi-caair-dev-tools/-/merge_requests/64)
+is a private/internal guide. If you do not have access, use SSH instead.
 
-   ```fish
-   command -s fish
-   ```
+Configure the local mounted directory and the path as seen by the Pi host:
 
-4. Use that path in the shortcut's script. For example, Apple Silicon Homebrew normally uses:
-
-   ```sh
-   /opt/homebrew/bin/fish -lc 'tp-shot --async'
-   ```
-
-   Intel Homebrew commonly uses `/usr/local/bin/fish`; other installations may differ.
-
-5. Open the shortcut details, enable **Use as Quick Action**, and add a keyboard shortcut such as Control-Option-Command-4.
-6. Run it once and approve any macOS screen-capture permission request.
-
-The shortcut opens the normal macOS crosshair. After selection, async mode copies the reserved remote path without waiting. A later notification reports whether that path became ready.
-
-The detached uploader survives the shortcut's shell process exiting. It uses non-interactive SSH, so it fails instead of leaving an invisible password prompt open. Configure key-based or Tailscale SSH access before using the keyboard shortcut.
-
-### cmux integration
-
-`tp cmux` maps tp-managed tmux sessions to cmux workspaces. It requires cmux socket automation to be enabled:
-
-1. Open cmux settings.
-2. Go to **Automation**.
-3. Enable **Socket Control Mode → Automation**.
-
-`jq` is used to identify an already-open workspace. Without it, `tp` cannot reliably detect and focus existing tp workspaces.
-
-### Pi session ids in listings
-
-`tp ls`, `tp global`, and `tp all` show the Pi session running in each tmux session, abbreviated to its first eight characters:
-
-```text
-Sessions for 'pi-delegate':
-  014  →  pi-delegate_014 [fix-232] pi:019ff3d2 (attached)
-  015  →  pi-delegate_015 [issue-119] pi:019ff185
+```toml
+[shot]
+transport = "taildrive"
+taildrive_dir = "/Volumes/taildrive/pi-screenshots"
+remote_dir = "/home/pi/.cache/pi/screenshots"
 ```
 
-The id comes from two tmux pane options that Pi writes on the pane it runs in:
+For a correct Taildrive mapping, configure both `shot.taildrive_dir` and
+`shot.remote_dir`: the first is the mounted directory and the second is the
+absolute Pi-host path. If `shot.remote_dir` is omitted, the current
+implementation falls back to the capture Mac's `~/.cache/pi/screenshots`, which
+may not map to the Pi directory. The clipboard receives `remote_dir`, never the
+Mac's `/Volumes/...` path. The transport uses a private temporary file and an
+atomic rename, and it never silently falls back to SSH. Run `tp doctor` to
+check the mount on macOS.
 
-```text
-@pi_session_id = <full Pi session id>
-@pi_pid        = <Pi's process id>
-```
+## Interoperability protocols
 
-Publishing them is the Pi side's job — the `@caair/pi-caair-dev-tools` package does it on session start and unsets them on shutdown. A session running anything else simply has no id to show.
+These sections describe data exchanged with tmux and
+`@caair/pi-caair-dev-tools`. `tp` reads these options; it does not publish
+Pi's pane options itself.
 
-`tp` reads both in the single `tmux list-sessions` call it already uses for labels and attachment, because a pane option resolves in a `list-sessions` format against each session's active pane.
+### Pi pane options
 
-Pi cannot unset the options when it is killed outright, so `tp` treats the published pid as the liveness check: an id whose process is gone is not shown. The check is `ps -p`, not `kill -0`, because `kill -0` fails on a live process owned by another user. An id published without a pid is shown as-is, since nothing disproves it.
+Pi publishes these options on its active pane:
+
+| Option | Meaning |
+| --- | --- |
+| `@pi_session_id` | Full Pi session id. |
+| `@pi_pid` | Pi process id used for liveness. |
+| `@pi_state` | `blocked`, `tool`, `thinking`, or `idle`. |
+| `@pi_tool` | Name of the running tool, when there is one. |
+| `@pi_state_since` | State start timestamp. |
+| `@pi_ctx_pct` | Context window percentage. |
+| `@pi_model` | Model name. |
+
+`tp` reads all seven in one `tmux list-sessions` call. It shows an id or state
+only while the published pid is alive, checked with `ps -p` rather than
+`kill -0`. A pane option without a pid is shown because there is no liveness
+signal to disprove it. Listings truncate ids to 13 characters; use `tp sid` for
+the full id. The Pi tooling publishes and clears these options.
 
 ### Session state
 
-Alongside the id, a listing shows what each Pi session is doing:
+Listings show the state marker, state duration, context percentage, and model:
 
 ```text
-  001  →  demo_001 [issue filer] pi:019ff650-ac6d · ⏸ blocked:bash 3m · 24% · gpt-5.6-sol
-  002  →  demo_002 [api work]    pi:019ff3d2-4dea · ● tool:read 4s · 61% · gpt-5.6-sol
-  003  →  demo_003              pi:019ff69e-6014 · ○ idle 2h · 8% · claude-opus-4-8
+001  →  demo_001 [issue filer] pi:019ff650-ac6d · ⏸ blocked:bash 3m · 24% · gpt-5.6-sol
+002  →  demo_002 [api work]    pi:019ff3d2-4dea · ● tool:read 4s · 61% · gpt-5.6-sol
+003  →  demo_003              pi:019ff69e-6014 · ○ idle 2h · 8% · claude-opus-4-8
 ```
 
-| Marker | State | Colour | Meaning |
+| Marker | State | Color | Meaning |
 | --- | --- | --- | --- |
-| `⏸` | `blocked` | yellow | Waiting for you — a guard prompt or a question |
-| `●` | `tool` | cyan | Running the named tool |
-| `●` | `thinking` | blue | Working, between tools |
-| `○` | `idle` | grey | Waiting for your next message |
+| `⏸` | `blocked` | yellow | Waiting for you: a guard prompt or question. |
+| `●` | `tool` | cyan | Running the named tool. |
+| `●` | `thinking` | blue | Working between tools. |
+| `○` | `idle` | grey | Waiting for your next message. |
 
-Then time in that state, context window used, and the model.
+A state is reported only while its publishing Pi process is alive. A session
+running `command-guard` without the Pi tooling therefore shows no state.
+Labels are green, ids and models are grey, and `(attached)` is magenta. Context
+is amber at 70% and red at 85%. Color is disabled for non-terminals unless
+forced by `TP_COLOR=always`.
 
-Every state carries both a marker and a colour, so the meaning survives a
-monochrome terminal, a pipe, and colour blindness. Yellow marks the only state
-that needs you; red is kept for a context window near its limit (85% or more,
-amber from 70%), where the next thing to happen is a compaction.
+### SSH origin contract
 
-Labels are green, the Pi id and model are grey — an id is for copying, not
-reading — and `(attached)` is magenta.
-
-Colour is disabled when output is not a terminal, so `tp ls | cat` and scripts
-get clean text. Two environment variables override that:
-
-| Variable | Effect |
-| --- | --- |
-| `NO_COLOR` | Never colour, whatever else is set |
-| `TP_COLOR=always` | Colour even through a pipe, for `tp ls \| less -R` |
-| `TP_COLOR=never` | Never colour |
-
-`blocked` is the one worth acting on, and it is reported rather than guessed. Pi
-emits no event when a prompt opens, and from outside a blocked session looks
-exactly like a busy one — both are a tool that started and has not ended. So a
-40-second compile cannot be told from a 40-second wait by timing alone. Instead
-the `ask` tool is known to block by definition, and `command-guard` marks its own
-prompts while they are open. Everything else is reported as the tool it is.
-
-State comes from more tmux pane options that Pi publishes, read in the same
-single call: `@pi_state`, `@pi_tool`, `@pi_state_since`, `@pi_ctx_pct`, and
-`@pi_model`. Publishing them is `@caair/pi-caair-dev-tools`' job.
-
-A state is only shown while the publishing process is alive, checked exactly as
-the id is. A `SIGKILL`ed Pi leaves its last state on the pane forever, and a
-listing claiming `thinking` for a process that no longer exists would be worse
-than showing nothing.
-
-That check needs the id and pid, so a session running `command-guard` **without**
-`@caair/pi-caair-dev-tools` shows no state at all — the guard publishes
-`blocked`, but nothing published an identity to verify it against. Install both
-to see state; installing only the guard changes nothing about how tp behaves
-today.
-
-Fields are dropped from the right when the terminal is too narrow, so the state
-survives and the model is the first thing to go.
-
-The listing truncates to 13 characters. Pi session ids are UUIDv7, whose leading hex digits are a millisecond timestamp rather than randomness — 8 characters is only a 65-second window, so sessions started together in that window share it. Thirteen characters reaches past the timestamp into the random block.
-
-For the exact, untruncated id, use `tp sid`:
-
-```fish
-tp sid 2      # 019ff650-ac6d-7641-bb90-4475b973cc82
-```
-
-It exits non-zero when that session is not running Pi.
-
-### Restart and resume a Pi session
-
-`--restart` stops the Pi running in a session and starts a fresh one that resumes the same conversation:
-
-```fish
-tp 2 --restart          # by project session number
-tp global 3 --restart   # by global list index
-```
-
-Use it when Pi itself needs restarting — after upgrading it, or when a session is wedged — without losing the conversation.
-
-What it does:
-
-1. Reads the session id the running Pi published.
-2. Sends `SIGTERM`, Pi's documented shutdown path, and waits up to five seconds for it to flush its session log and exit. If it outlives that, ending the tmux session takes it down.
-3. Finds the exact saved session file and rebuilds the original command recorded in `TP_CMD`, dropping `--resume`, `--continue`, and any previous `--session`, then appending `--session <path>`. Other flags such as `--model` and `--thinking` are kept. The lookup includes first-level session directories such as `sessions/forks`, which Pi APIs can use for a live conversation.
-4. Recreates the tmux session with the same name, number, label, and working directory, and attaches to it.
-
-The conversation is restored from the session log, so the new Pi keeps the full history and the same session id. It is a new process with a new context window, not a live migration: work that was in flight when it was stopped is not resumed.
-
-`--restart` refuses, and changes nothing, when:
-
-- the target session is not running a live Pi — a plain shell session, or one whose Pi was killed outright and left only a stale id; or
-- that Pi has no saved conversation yet. Pi publishes its session id at startup but does not write the session log until the first message, so restarting a session you have not spoken to would resume an id that does not resolve. Nothing is killed in that case.
-
-### SSH origin metadata
-
-Before an outside client attaches, `tp` records the first whitespace-delimited field of that shell's `SSH_CONNECTION` in a server-wide tmux user option keyed by the attaching TTY:
+Before an outside client attaches, `tp` records the first whitespace-delimited
+field of `SSH_CONNECTION` in a server-wide tmux option:
 
 ```text
 @tp_ssh_source_<sanitized-client-tty> = v1 ip=<source-ip> created=<client_created>
 ```
 
-For example, `/dev/pts/7` uses `@tp_ssh_source_dev_pts_7`, while `/dev/ttys003` uses `@tp_ssh_source_dev_ttys003`. `tp` trims the full TTY, rejects empty values, control characters, and values longer than 255 characters, replaces each run outside `[A-Za-z0-9]` with `_`, trims leading and trailing `_`, and rejects an empty result.
+The TTY is trimmed; empty, control-character, and over-255-character values
+are rejected. Runs outside `[A-Za-z0-9]` become `_`, leading and trailing `_`
+are removed, and an empty result is rejected. For valid metadata, `tp` clears
+the mapping, installs a one-shot `client-attached` hook, and stamps the real
+`#{client_created}`. The hook verifies the TTY and clears temporary values.
+Missing or invalid SSH metadata clears the exact mapping.
 
-The attaching client does not exist until `attach-session` starts. For valid SSH metadata, `tp` therefore clears the mapping, installs a one-shot `client-attached` hook, and lets that hook stamp the real `#{client_created}`. The hook also checks the attaching TTY and clears its temporary values. If the hook cannot obtain a valid creation value, the mapping remains clear. Missing or invalid SSH metadata clears the exact mapping. A bare source IP was unsafe because a TTY is reused and the server-global option outlives its client: a later plain `tmux attach` could otherwise present the previous client's source. Consumers must compare `created` with the currently attached client's `#{client_created}` and refuse a mismatch.
+When `tp` switches sessions inside tmux, it preserves the current client's
+mapping instead of trusting a pane's possibly stale `SSH_CONNECTION`. The
+stored source is a token until a consumer validates it as an IP address.
+`tp origin` exposes the freshness comparison as `createdFresh`; other
+consumers must compare `created` to the currently attached client's
+`#{client_created}` and reject a mismatch. This lifecycle check protects
+against TTY reuse and stale server-global options. The hook has narrow owner-PID
+reuse and concurrent fallback-slot race windows; the lifecycle comparison is
+the stale-record protection.
 
-When `tp` switches sessions from inside tmux, it reads and preserves the current `#{client_tty}` mapping instead of using the pane's potentially stale `SSH_CONNECTION`. The stored source is only a token from SSH connection metadata; a consumer must validate it as an IP address. The consumer's `created` comparison is what makes a stale record harmless when a TTY is reused.
+## Session names and state files
 
-Known limitations are owner PID reuse and hook-slot reservation. If the original owner PID is recycled before the hook fires, `kill -0` alone cannot distinguish the unrelated process. The primary hook slot uses the Fish PID, but the random fallback has a check-then-set race between concurrent processes. `tp` narrows these windows; the lifecycle-bound `created` comparison remains the protection against stale records. `tp` does not enumerate stale mappings and does not depend on Pi or Tailscale.
-
-## How project names work
-
-The project name is the basename of the current working directory, with leading dots removed. Session names use this form:
-
-```text
-<project>_<number>
-```
-
-Numbers are padded to three digits (`001`, `002`, …) and are sorted numerically.
-
-## Development
-
-Check Fish syntax and run the tests:
-
-```fish
-fish -n functions/*.fish completions/*.fish tests/*.fish
-fish tests/test_tp.fish
-fish tests/test_tp_shot.fish
-```
+The project is the basename of the current directory with leading dots
+removed. Session names are `<project>_<NNN>`. `tp restore` stores snapshots at
+`$XDG_STATE_HOME/tp/sessions.json`, or `~/.local/state/tp/sessions.json` by
+default. Records include the session, project, number, label, working
+ directory, recorded `TP_CMD`, Pi session id, and update time.
 
 ## License
 
