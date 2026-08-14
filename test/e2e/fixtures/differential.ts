@@ -3,6 +3,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +17,9 @@ const fishEntrypoint = join(repoRoot, "legacy/functions/tp.fish");
 const fakePiEntrypoint = join(import.meta.dir, "fake-pi.ts");
 const tmuxBinary = Bun.which("tmux") ?? "/usr/bin/tmux";
 const differentialTerm = "xterm";
+const tmuxStartupBudgetMs = 10_000;
+const tmuxRetryInitialDelayMs = 25;
+const tmuxRetryMaxDelayMs = 250;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: terminal escape bytes are intentional here.
 const sgr0ResetPrefix = /\x1b\(B(?=\x1b\[m)/g;
 
@@ -68,6 +72,7 @@ export class DifferentialTmuxServer {
 	readonly socket = `tp-parity-${process.pid}-${randomToken()}`;
 	readonly socketFile = socketPath(this.socket);
 	readonly root = mkdtempSync(join(tmpdir(), "tp-parity-server-"));
+	readonly configFile = join(this.root, "tmux.conf");
 	readonly env = {
 		TP_TMUX_SOCKET: this.socket,
 		TMUX: undefined,
@@ -77,9 +82,13 @@ export class DifferentialTmuxServer {
 
 	constructor(readonly cwd: string) {}
 
-	private invoke(args: readonly string[], allowFailure = false): CommandResult {
+	private invoke(
+		args: readonly string[],
+		allowFailure = false,
+		configFile = "/dev/null",
+	): CommandResult {
 		const child = Bun.spawnSync({
-			cmd: [tmuxBinary, "-L", this.socket, "-f", "/dev/null", ...args],
+			cmd: [tmuxBinary, "-L", this.socket, "-f", configFile, ...args],
 			env: inheritedEnvironment({
 				TERM: differentialTerm,
 				TMUX: undefined,
@@ -97,9 +106,86 @@ export class DifferentialTmuxServer {
 		return result;
 	}
 
+	private static isTransientStartupFailure(result: CommandResult): boolean {
+		const detail = `${result.stdout}\n${result.stderr}`;
+		return (
+			detail.includes("server exited unexpectedly") ||
+			detail.includes("failed to connect to server") ||
+			detail.includes("no server running")
+		);
+	}
+
+	private setupInvoke(
+		args: readonly string[],
+		allowFailure = false,
+		configFile = "/dev/null",
+	): CommandResult {
+		const deadline = Date.now() + tmuxStartupBudgetMs;
+		let delayMs = tmuxRetryInitialDelayMs;
+		let lastFailure = "";
+		for (;;) {
+			try {
+				const result = this.invoke(args, allowFailure, configFile);
+				if (!DifferentialTmuxServer.isTransientStartupFailure(result))
+					return result;
+				lastFailure = result.stderr.trim();
+			} catch (error) {
+				if (
+					!(error instanceof Error) ||
+					!DifferentialTmuxServer.isTransientStartupFailure({
+						stdout: "",
+						stderr: error.message,
+						exitCode: 1,
+					})
+				)
+					throw error;
+				lastFailure = error.message;
+			}
+			if (Date.now() >= deadline)
+				throw new Error(
+					`tmux ${args.join(" ")} failed after ${tmuxStartupBudgetMs}ms: ${lastFailure}`,
+				);
+			Atomics.wait(
+				new Int32Array(new SharedArrayBuffer(4)),
+				0,
+				0,
+				Math.min(delayMs, deadline - Date.now()),
+			);
+			delayMs = Math.min(delayMs * 2, tmuxRetryMaxDelayMs);
+		}
+	}
+
+	private waitUntilReady(): void {
+		const deadline = Date.now() + tmuxStartupBudgetMs;
+		let delayMs = tmuxRetryInitialDelayMs;
+		let lastFailure = "";
+		for (;;) {
+			const result = this.invoke(["list-sessions"], true);
+			if (result.exitCode === 0) return;
+			lastFailure = result.stderr.trim();
+			if (
+				!DifferentialTmuxServer.isTransientStartupFailure(result) ||
+				Date.now() >= deadline
+			)
+				break;
+			Atomics.wait(
+				new Int32Array(new SharedArrayBuffer(4)),
+				0,
+				0,
+				Math.min(delayMs, deadline - Date.now()),
+			);
+			delayMs = Math.min(delayMs * 2, tmuxRetryMaxDelayMs);
+		}
+		throw new Error(
+			`tmux list-sessions did not become ready after ${tmuxStartupBudgetMs}ms: ${lastFailure}`,
+		);
+	}
+
 	start(): void {
 		if (this.started) return;
-		this.invoke(["start-server"]);
+		writeFileSync(this.configFile, "set-option -g exit-empty off\n");
+		this.setupInvoke(["start-server"], false, this.configFile);
+		this.waitUntilReady();
 		this.started = true;
 	}
 
@@ -110,19 +196,19 @@ export class DifferentialTmuxServer {
 	}
 
 	newSession(name: string): void {
-		this.run(["new-session", "-d", "-s", name, "-c", this.cwd]);
+		this.setupInvoke(["new-session", "-d", "-s", name, "-c", this.cwd]);
 	}
 
 	setSessionOption(name: string, option: string, value: string): void {
-		this.run(["set-option", "-t", name, option, value]);
+		this.setupInvoke(["set-option", "-t", name, option, value]);
 	}
 
 	setPaneOption(name: string, option: string, value: string): void {
-		this.run(["set-option", "-p", "-t", `${name}:0.0`, option, value]);
+		this.setupInvoke(["set-option", "-p", "-t", `${name}:0.0`, option, value]);
 	}
 
 	showPaneOption(name: string, option: string): string {
-		return this.run(
+		return this.setupInvoke(
 			["show-option", "-p", "-t", `${name}:0.0`, "-v", option],
 			true,
 		).stdout.trim();
@@ -147,7 +233,7 @@ export class DifferentialTmuxServer {
 			"--model",
 			options.model,
 		];
-		this.run([
+		this.setupInvoke([
 			"new-session",
 			"-d",
 			"-s",
@@ -157,14 +243,14 @@ export class DifferentialTmuxServer {
 			"--",
 			...args,
 		]);
-		const paneId = this.run([
+		const paneId = this.setupInvoke([
 			"display-message",
 			"-p",
 			"-t",
 			`${options.sessionName}:0.0`,
 			"#{pane_id}",
 		]).stdout.trim();
-		const pidText = this.run([
+		const pidText = this.setupInvoke([
 			"display-message",
 			"-p",
 			"-t",
@@ -206,19 +292,35 @@ export class DifferentialTmuxServer {
 				socket: this.socket,
 			});
 		} finally {
-			this.run(["kill-session", "-t", `=${probe}`], true);
+			this.invoke(["kill-session", "-t", `=${probe}`], true);
 		}
 	}
 
 	teardown(): void {
-		if (this.started) this.invoke(["kill-server"], true);
-		this.started = false;
 		try {
-			rmSync(this.socketFile, { force: true });
+			if (this.started) this.invoke(["kill-server"], true);
 		} catch {
-			// tmux may remove its socket asynchronously.
+			// Teardown must not hide the comparison failure.
+		}
+		this.started = false;
+		for (let attempt = 0; attempt < 40; attempt += 1) {
+			try {
+				rmSync(this.socketFile, { force: true });
+			} catch {
+				// tmux may remove its socket asynchronously.
+			}
+			if (!this.socketExists()) break;
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
 		}
 		rmSync(this.root, { recursive: true, force: true });
+	}
+
+	private socketExists(): boolean {
+		try {
+			return statSync(this.socketFile).isSocket();
+		} catch {
+			return false;
+		}
 	}
 }
 
