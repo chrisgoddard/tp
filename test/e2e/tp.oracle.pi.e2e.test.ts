@@ -252,7 +252,7 @@ test("restart locates a saved session in the forks folder", () =>
 
 // Fish source: legacy/tests/test_tp.fish:763 — restart reopens the exact saved
 // conversation instead of invoking global ID lookup.
-test("restart passes the exact fork log path to the recreated Pi", () =>
+const restartForkLogPath = () =>
 	withAgentDirectory((agentDirectory) => {
 		const server = new ScratchTmuxServer();
 		server.start();
@@ -313,7 +313,87 @@ test("restart passes the exact fork log path to the recreated Pi", () =>
 			else process.env.TMUX = previousTmux;
 			server.teardown();
 		}
-	}));
+	});
+
+test(
+	"restart passes the exact fork log path to the recreated Pi",
+	restartForkLogPath,
+	20_000,
+);
+
+const restartHardStopFallback = () =>
+	withAgentDirectory((agentDirectory) => {
+		const server = new ScratchTmuxServer();
+		server.start();
+		const name = `${basename(server.root)}_001`;
+		const sessionId = "019ff6ca-d2be-7455-a16b-3847839264fd";
+		const directory = join(agentDirectory, "sessions", "forks");
+		const file = join(directory, `2026-01-02T00-00-00-000Z_${sessionId}.jsonl`);
+		const command = [
+			"fish",
+			"--command",
+			'trap "" TERM; while true; sleep 1; end',
+			"--",
+		];
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(file, "");
+		server.run([
+			"new-session",
+			"-d",
+			"-s",
+			name,
+			"-c",
+			server.root,
+			"--",
+			...command,
+		]);
+		const pane = server
+			.run(["display-message", "-p", "-t", `${name}:0.0`, "#{pane_id}"])
+			.stdout.trim();
+		const pid = Number(
+			server
+				.run(["display-message", "-p", "-t", pane, "#{pane_pid}"])
+				.stdout.trim(),
+		);
+		server.run(["set-option", "-p", "-t", pane, "@pi_session_id", sessionId]);
+		server.run(["set-option", "-p", "-t", pane, "@pi_pid", String(pid)]);
+		server.run([
+			"set-environment",
+			"-t",
+			`=${name}`,
+			"TP_CMD",
+			`fish --command '${command[2]}' --`,
+		]);
+
+		const previousSocket = process.env.TP_TMUX_SOCKET;
+		const previousTmux = process.env.TMUX;
+		process.env.TP_TMUX_SOCKET = server.socket;
+		process.env.TMUX = undefined;
+		try {
+			expect(isProcessAlive(pid)).toBe(true);
+			const started = performance.now();
+			expect(restartSession(name)).toBe(0);
+			const elapsed = performance.now() - started;
+			expect(elapsed).toBeGreaterThanOrEqual(4_900);
+			expect(elapsed).toBeLessThan(8_000);
+			expect(isProcessAlive(pid)).toBe(false);
+			expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
+				0,
+			);
+		} finally {
+			if (previousSocket === undefined) process.env.TP_TMUX_SOCKET = undefined;
+			else process.env.TP_TMUX_SOCKET = previousSocket;
+			if (previousTmux === undefined) process.env.TMUX = undefined;
+			else process.env.TMUX = previousTmux;
+			server.teardown();
+		}
+	});
+
+test(
+	"restart hard-stop fallback stays bounded when Pi ignores SIGTERM",
+	restartHardStopFallback,
+	20_000,
+);
 
 // The refusal checks deliberately call the exported restart primitive. Core and
 // listings own the numeric/global command routing, while this lane owns the

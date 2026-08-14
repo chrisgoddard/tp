@@ -2,7 +2,6 @@ import { type Dirent, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { type CommandContext, registerCommandHandler } from "../lib/cli";
-import { isProcessAlive } from "../lib/pi";
 import { parseSessionName, projectName, sessionName } from "../lib/project";
 import {
 	attach,
@@ -214,18 +213,40 @@ export function findPiSessionFile(
 	return undefined;
 }
 
+/** `ps -p` reports zombies, but a zombie has already stopped running. */
+function isPiProcessRunning(pid: number): boolean {
+	const value = String(pid);
+	if (!/^\d+$/.test(value) || value === "0") return false;
+	const result = Bun.spawnSync({
+		cmd: ["ps", "-o", "stat=", "-p", value],
+		stdout: "pipe",
+		stderr: "ignore",
+	});
+	if (result.exitCode !== 0) return false;
+	const state = new TextDecoder().decode(result.stdout).trim();
+	return state !== "" && !state.startsWith("Z");
+}
+
 function waitForPiExit(pid: number): boolean {
-	if (!isProcessAlive(pid)) return true;
+	if (!isPiProcessRunning(pid)) return true;
 	Bun.spawnSync({
 		cmd: ["kill", "-TERM", String(pid)],
 		stdout: "ignore",
 		stderr: "ignore",
 	});
-	for (let attempt = 0; attempt < 50; attempt += 1) {
-		if (!isProcessAlive(pid)) return true;
-		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+	const deadline = Date.now() + 5_000;
+	for (;;) {
+		// Check immediately after SIGTERM and before each sleep slice.
+		if (!isPiProcessRunning(pid)) return true;
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) return false;
+		Atomics.wait(
+			new Int32Array(new SharedArrayBuffer(4)),
+			0,
+			0,
+			Math.min(100, remaining),
+		);
 	}
-	return !isProcessAlive(pid);
 }
 
 function readEnvironment(name: string, variable: string): string | undefined {
