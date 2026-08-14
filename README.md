@@ -14,7 +14,7 @@ A project named `website` gets sessions such as `website_001` and
 - [Bun](https://bun.sh/), version 1.1 or newer
 - [tmux](https://github.com/tmux/tmux), version 3.2 or newer
 - Optional: [cmux](https://github.com/manaflow-ai/cmux) with socket automation
-- Optional: [Tailscale](https://tailscale.com/) for SSH-origin names
+- Required by `tp origin`: [Tailscale](https://tailscale.com/) CLI; optional otherwise
 - macOS, SSH access, and a notification tool for `tp-shot`
 
 ## Install
@@ -27,13 +27,16 @@ cd tp
 bun install && bun link
 ```
 
-This links both `tp` and `tp-shot` into your Bun bin directory. Publishing an
-npm package is planned; it is not available yet.
+This links both `tp` and `tp-shot` into your Bun bin directory. Ensure that
+Bun's bin directory (`$HOME/.bun/bin` or `$BUN_INSTALL/bin`) is on `PATH`.
+Publishing an npm package is planned; it is not available yet.
 
 Check the installation with:
 
 ```sh
+command -v tp tp-shot
 tp version
+tp-shot --version
 tp doctor
 ```
 
@@ -67,8 +70,10 @@ The complete `tp help` command list is below. Aliases are shown in parentheses.
 | `tp help` | Show help |
 | `tp version` | Show the version |
 
-Every command accepts `-h` or `--help` where its help text lists that option.
-The command resolver tries an exact command or alias, a session number, and then
+Global `tp -h`/`--help` prints the command list. Global `tp -V`/`--version`
+prints the version. Every command accepts `-h` or `--help` where its help text
+lists that option. The command resolver tries an exact command or alias, a
+session number, and then
 a unique label prefix. A label that has the same name as a command cannot be
 reached by that name.
 
@@ -169,9 +174,10 @@ pressed. `tp g -w` watches all projects. Both need a terminal. `tp b` attaches
 to the only blocked session, lists blocked sessions and exits 1 when there are
 several, and exits 1 with `nothing blocked` when there are none.
 
-`tp status` prints counts such as `2 blocked · 3 busy · 4 idle`. `-g` includes
-all projects. `--tmux` prints a status-line segment with tmux color formats;
-`--json` prints `{blocked,busy,idle,total}`.
+`tp status` prints counts such as `2 blocked · 3 busy · 4 idle`. If sessions
+exist but none publishes Pi state, plain and `--tmux` output are blank. `-g`
+includes all projects. `--tmux` prints a status-line segment with tmux color
+formats; `--json` still reports `{blocked,busy,idle,total}`.
 
 ### Origin, diagnostics, and maintenance
 
@@ -190,11 +196,12 @@ tp restore --project website
 tp restore
 ```
 
-`tp origin` reports the current, verified SSH origin. When Tailscale whois
-resolves it, the output includes hostname and user; `--json` returns
-`hostname`, `user`, `ip`, and `createdFresh`. `tp doctor` runs environment
-checks and returns nonzero when a required check fails. `--json` returns the 11
-checks with `id`, `status` (`pass`, `fail`, or `skip`), and `detail`.
+`tp origin` requires the Tailscale CLI. When Tailscale whois resolves the
+current, verified SSH origin, the output includes hostname and user;
+`--json` returns `hostname`, `user`, `ip`, and `createdFresh`. A stale mapping
+reports `createdFresh=false` and still exits 0. `tp doctor` runs environment
+checks and returns nonzero when a required check fails. `doctor --json` returns
+11 checks, each with `id`, `status` (`pass`, `fail`, or `skip`), and `detail`.
 
 `tp update` is for a clean git-clone install with an upstream branch. It runs a
 fast-forward-only pull and installs dependencies; `--check` only compares the
@@ -225,6 +232,7 @@ tp completions fish | source
 Install it for future shells:
 
 ```fish
+mkdir -p ~/.config/fish/completions
 tp completions fish > ~/.config/fish/completions/tp.fish
 ```
 
@@ -280,7 +288,8 @@ the path it prints when `XDG_CONFIG_HOME` is set). The generated bindings are:
 
 The configuration file is `~/.config/tp/config.toml`, or
 `$XDG_CONFIG_HOME/tp/config.toml` when `XDG_CONFIG_HOME` is set. Precedence is
-**flag > environment > file > default**. Unknown keys are warned about.
+**flag > environment > file > default**. Unknown top-level and `shot.*` keys
+are warned about. Extra layout and window fields are ignored.
 
 ### Environment variables
 
@@ -291,7 +300,7 @@ The configuration file is `~/.config/tp/config.toml`, or
 | `NO_COLOR` | Disable color for all output. |
 | `TP_TMUX_SOCKET` | Use the named tmux socket; useful for isolated test servers. |
 | `TP_SHOT_HOST` | SSH host or alias for `tp-shot` (default `good-studio`). |
-| `TP_SHOT_REMOTE_DIR` | Remote Pi-host directory for screenshots. It must be absolute for async uploads. |
+| `TP_SHOT_REMOTE_DIR` | Remote Pi-host directory. SSH accepts absolute paths, `~`, or `~/...`; Taildrive should use an explicit absolute Pi-host path. |
 | `TP_SHOT_NOTIFIER` | `auto`, `terminal-notifier`, `osascript`, or `none`. |
 | `TP_SHOT_TRANSPORT` | `ssh` or `taildrive`. |
 | `TP_SHOT_DIR` | Override the directory searched by `tp shot`. |
@@ -306,17 +315,22 @@ colors. The precedence is `NO_COLOR`, then `TP_COLOR`, then terminal
 
 | Key | Type and meaning |
 | --- | --- |
-| `shell` | String. Shell for `tp new`; defaults to `$SHELL`, then `fish`. |
-| `color` | String. `auto`, `always`, or `never`. |
-| `shot.host` | String. SSH host or alias. |
-| `shot.remote_dir` | String. Remote Pi-host screenshot directory. `~` and `~/...` are expanded. |
-| `shot.taildrive_dir` | String. Locally mounted Taildrive share directory; required for `taildrive`. |
-| `shot.notifier` | String. `auto`, `terminal-notifier`, `osascript`, or `none`. |
+| `shell` | String. Shell for `tp new`; defaults to `$SHELL`. If `$SHELL` is unset, `tp new` uses `sh` when no config file exists and `fish` when the file exists. |
+| `color` | String. `auto`, `always`, or `never`; defaults to `auto`. |
+| `shot.host` | String. SSH host or alias; defaults to `good-studio`. |
+| `shot.remote_dir` | String. Remote Pi-host directory. SSH defaults to remote `~/.cache/pi/screenshots` and accepts absolute paths, `~`, or `~/...`; Taildrive should be given the explicit absolute Pi-host path. |
+| `shot.taildrive_dir` | String. Locally mounted Taildrive share directory; unset by default and required for `taildrive`. |
+| `shot.notifier` | String. `auto`, `terminal-notifier`, `osascript`, or `none`; defaults to `auto`. |
 | `shot.transport` | String. `ssh` (default) or `taildrive`. |
 | `layouts.<name>.windows` | Array of window tables. A layout must contain this array. |
 | `layouts.<name>.windows[].name` | String. Required window or pane name. |
 | `layouts.<name>.windows[].cmd` | String, optional. Command run by the configured shell. |
 | `layouts.<name>.windows[].split` | `"h"` or `"v"`, optional. Split the previous window's pane; the first entry cannot split. |
+
+Environment equivalents are `TP_SHELL`, `TP_COLOR`, `TP_SHOT_HOST`,
+`TP_SHOT_REMOTE_DIR`, `TP_SHOT_NOTIFIER`, and `TP_SHOT_TRANSPORT`.
+`shot.taildrive_dir` and layouts have no environment equivalent. No layouts are
+defined by default.
 
 Example:
 
@@ -363,8 +377,9 @@ shell.
 ## tp-shot: direct-binary screenshot uploads
 
 `tp-shot` captures a macOS interactive screenshot, uploads it, and copies the
-remote path to the clipboard. SSH is the default transport. Synchronous mode
-waits for the upload:
+remote path to the clipboard. Use `-h`/`--help` for usage and
+`-V`/`--version` for the version. SSH is the default transport. Synchronous
+mode waits for the upload:
 
 ```sh
 tp-shot
@@ -380,18 +395,21 @@ tp-shot --notify-test
 ```
 
 Use `--host HOST` to override the SSH host and `--transport ssh|taildrive` to
-choose a transport. Files are private and are published only after the upload
-is complete. Async logs are under `~/.cache/tp-shot/` unless
-`TP_SHOT_LOG_DIR` is set. Notifications use `terminal-notifier` when available
-and fall back to `osascript`; `TP_SHOT_NOTIFIER=none` disables them.
+choose a transport. Uploads stay private. Async uploads and both Taildrive
+modes publish atomically; synchronous SSH writes directly to a private final
+path. Async logs use `$TP_SHOT_LOG_DIR`, then `$XDG_CACHE_HOME/tp-shot`, then
+`~/.cache/tp-shot`. Notifications use `terminal-notifier` when available and
+fall back to `osascript`; `TP_SHOT_NOTIFIER=none` disables them.
 
 ### macOS Shortcuts
 
-For a keyboard shortcut, create a macOS Shortcut with **Run Shell Script** and
-call the installed binary directly:
+For a keyboard shortcut, create a macOS Shortcut with **Run Shell Script**. Set
+Bun's path explicitly and call the installed binary directly:
 
 ```sh
-tp-shot --async
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+export PATH="$BUN_INSTALL/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+exec "$BUN_INSTALL/bin/tp-shot" --async
 ```
 
 Do not invoke `fish -lc`; no shell plugin is needed. Enable **Use as Quick
@@ -408,15 +426,16 @@ ssh good-studio true
 tp-shot --notify-test
 ```
 
-For async mode, the laptop's `TP_SHOT_REMOTE_DIR` must be the same absolute
-Pi-host directory that Pi reads. `tp-shot` copies that remote path, not a local
-path. The normal screenshot shortcut remains unchanged.
+For async SSH mode, the laptop's `TP_SHOT_REMOTE_DIR` may be an absolute path,
+`~`, or `~/...`; the remote resolves `~`. `tp-shot` copies that remote path, not
+a local path. Taildrive should use the explicit absolute Pi-host path. The
+normal screenshot shortcut remains unchanged.
 
 ### Taildrive setup
 
-The Tailscale bridge mounts a Taildrive share on the capture Mac. Follow the
+The Tailscale bridge mounts a Taildrive share on the capture Mac. The
 [pi-caair-dev-tools tailscale-bridge documentation](https://gitlab.intel.com/pi/pi-caair-dev-tools/-/merge_requests/64)
-to install and mount that share on both computers.
+is a private/internal guide. If you do not have access, use SSH instead.
 
 Configure the local mounted directory and the path as seen by the Pi host:
 
@@ -427,11 +446,14 @@ taildrive_dir = "/Volumes/taildrive/pi-screenshots"
 remote_dir = "/home/pi/.cache/pi/screenshots"
 ```
 
-`shot.taildrive_dir` is required and must already be a mounted directory.
-`shot.remote_dir` must name the corresponding directory on the Pi host. The
-clipboard receives `remote_dir`, never the Mac's `/Volumes/...` path. The
-transport uses a private temporary file and an atomic rename, and it never
-silently falls back to SSH. Run `tp doctor` to check the mount on macOS.
+For a correct Taildrive mapping, configure both `shot.taildrive_dir` and
+`shot.remote_dir`: the first is the mounted directory and the second is the
+absolute Pi-host path. If `shot.remote_dir` is omitted, the current
+implementation falls back to the capture Mac's `~/.cache/pi/screenshots`, which
+may not map to the Pi directory. The clipboard receives `remote_dir`, never the
+Mac's `/Volumes/...` path. The transport uses a private temporary file and an
+atomic rename, and it never silently falls back to SSH. Run `tp doctor` to
+check the mount on macOS.
 
 ## Interoperability protocols
 
@@ -501,7 +523,8 @@ Missing or invalid SSH metadata clears the exact mapping.
 When `tp` switches sessions inside tmux, it preserves the current client's
 mapping instead of trusting a pane's possibly stale `SSH_CONNECTION`. The
 stored source is a token until a consumer validates it as an IP address.
-Consumers must compare `created` to the currently attached client's
+`tp origin` exposes the freshness comparison as `createdFresh`; other
+consumers must compare `created` to the currently attached client's
 `#{client_created}` and reject a mismatch. This lifecycle check protects
 against TTY reuse and stale server-global options. The hook has narrow owner-PID
 reuse and concurrent fallback-slot race windows; the lifecycle comparison is
