@@ -25,6 +25,17 @@ function withAgentDirectory<T>(callback: (directory: string) => T): T {
 	}
 }
 
+function withTmuxSocket<T>(server: ScratchTmuxServer, callback: () => T): T {
+	const previous = process.env.TP_TMUX_SOCKET;
+	process.env.TP_TMUX_SOCKET = server.socket;
+	try {
+		return callback();
+	} finally {
+		if (previous === undefined) process.env.TP_TMUX_SOCKET = undefined;
+		else process.env.TP_TMUX_SOCKET = previous;
+	}
+}
+
 // Fish source: legacy/tests/test_tp.fish:652 — tp sid prints the full, not
 // truncated, Pi session id.
 test("tp sid prints the full untruncated Pi session id", async () => {
@@ -314,7 +325,7 @@ test("restart refuses no Pi without killing the tmux session", () => {
 	const name = `${project}_001`;
 	server.run(["new-session", "-d", "-s", name, "sleep", "30"]);
 	try {
-		expect(restartSession(name)).toBe(1);
+		withTmuxSocket(server, () => expect(restartSession(name)).toBe(1));
 		expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
 			0,
 		);
@@ -335,7 +346,7 @@ test("restart refuses a stale id without killing the tmux session", () => {
 	server.run(["set-option", "-p", "-t", pane, "@pi_session_id", SESSION_ID]);
 	server.run(["set-option", "-p", "-t", pane, "@pi_pid", "999999"]);
 	try {
-		expect(restartSession(name)).toBe(1);
+		withTmuxSocket(server, () => expect(restartSession(name)).toBe(1));
 		expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
 			0,
 		);
@@ -356,7 +367,7 @@ test("restart refuses an id without a saved file without killing Pi", () => {
 	try {
 		waitFor(() => fake.options()["@pi_session_id"] === SESSION_ID);
 		withAgentDirectory(() => {
-			expect(restartSession(name)).toBe(1);
+			withTmuxSocket(server, () => expect(restartSession(name)).toBe(1));
 			expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
 				0,
 			);
@@ -378,7 +389,7 @@ test("tp <n> --restart routes through restartSession", async () => {
 			env: server.env,
 		});
 		expect(result.exitCode).toBe(1);
-		expect(result.stderr).toBe("");
+		expect(result.stderr).toContain("no live Pi metadata");
 		expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
 			0,
 		);
@@ -398,7 +409,7 @@ test("tp global <i> --restart routes through restartSession", async () => {
 			env: server.env,
 		});
 		expect(result.exitCode).toBe(1);
-		expect(result.stderr).toBe("");
+		expect(result.stderr).toContain("no live Pi metadata");
 		expect(server.run(["has-session", "-t", `=${name}`], true).exitCode).toBe(
 			0,
 		);

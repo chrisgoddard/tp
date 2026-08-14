@@ -245,21 +245,25 @@ export function registerPiSessionCommands(): void {
 export function restartSession(
 	sessionNameValue: string,
 ): Promise<number> | number {
+	const refuse = (reason: string): number => {
+		console.error(`tp: cannot restart '${sessionNameValue}': ${reason}`);
+		return 1;
+	};
 	const session = listSessions().find((item) => item.name === sessionNameValue);
-	if (!session) return 1;
+	if (!session) return refuse("session missing");
 	const pi = session.pi;
-	if (!pi?.pid || !pi.sessionId) return 1;
+	if (!pi?.pid || !pi.sessionId) return refuse("no live Pi metadata");
 
 	const cwd =
 		session.cwd && statSyncSafeDirectory(session.cwd)
 			? session.cwd
 			: process.cwd();
 	const sessionFile = findPiSessionFile(cwd, pi.sessionId);
-	if (!sessionFile) return 1;
+	if (!sessionFile) return refuse("no saved conversation");
 	const original = readEnvironment(sessionNameValue, "TP_CMD");
-	if (!original) return 1;
+	if (!original) return refuse("no TP_CMD recorded");
 	const command = rebuildRestartCommand(original, sessionFile);
-	if (!command) return 1;
+	if (!command) return refuse("recorded TP_CMD cannot be restarted");
 
 	// Keep tmux's session alive while the Pi pane exits. Otherwise tmux may tear
 	// down the last session before the replacement can be created.
@@ -287,7 +291,7 @@ export function restartSession(
 		// failure after the replacement has succeeded.
 		return process.env.TMUX ? attach(sessionNameValue) : 0;
 	} catch {
-		return 1;
+		return refuse("failed to recreate session");
 	}
 }
 

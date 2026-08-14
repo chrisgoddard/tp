@@ -230,7 +230,11 @@ function piPublishingCheck(reachable: boolean): DoctorCheck {
 	);
 	return live
 		? check(5, "pass", "a live session publishes a Pi session id")
-		: check(5, "fail", "no live session publishes a Pi session id");
+		: check(
+				5,
+				"fail",
+				"no live Pi metadata found; start one with 'tp pi' (optional integration)",
+			);
 }
 
 function originCheck(): DoctorCheck {

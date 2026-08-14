@@ -17,26 +17,37 @@ import {
 	validateSource,
 } from "../lib/shot";
 
-interface ParsedArgs {
+export interface ParsedArgs {
 	async: boolean;
 	notifyTest: boolean;
+	version: boolean;
 	host?: string;
 	transport?: string;
 	input?: string;
 	help: boolean;
 }
 
+export const USAGE = [
+	"Usage: tp-shot [--async] [--host HOST] [--transport ssh|taildrive] [IMAGE]",
+	"       tp-shot --notify-test",
+	"       tp-shot -V | --version",
+].join("\n");
+
 function usage(): string {
 	return [
-		"Usage: tp-shot [--async] [--host HOST] [--transport ssh|taildrive] [IMAGE]",
-		"       tp-shot --notify-test",
+		USAGE,
 		"",
 		"Capture or upload an image for a remote Pi session.",
 	].join("\n");
 }
 
-function parseArgs(args: readonly string[]): ParsedArgs {
-	const parsed: ParsedArgs = { async: false, notifyTest: false, help: false };
+export function parseArgs(args: readonly string[]): ParsedArgs {
+	const parsed: ParsedArgs = {
+		async: false,
+		notifyTest: false,
+		version: false,
+		help: false,
+	};
 	const positional: string[] = [];
 	for (let index = 0; index < args.length; index += 1) {
 		const arg = args[index];
@@ -47,18 +58,19 @@ function parseArgs(args: readonly string[]): ParsedArgs {
 		if (arg === "--async") parsed.async = true;
 		else if (arg === "--notify-test") parsed.notifyTest = true;
 		else if (arg === "--help" || arg === "-h") parsed.help = true;
-		else if (arg === "--host") parsed.host = args[++index] ?? "";
+		else if (arg === "--version" || arg === "-V") {
+			if (args.length !== 1) throw new Error(USAGE);
+			parsed.version = true;
+		} else if (arg === "--host") parsed.host = args[++index] ?? "";
 		else if (arg.startsWith("--host="))
 			parsed.host = arg.slice("--host=".length);
 		else if (arg === "--transport") parsed.transport = args[++index] ?? "";
 		else if (arg.startsWith("--transport="))
 			parsed.transport = arg.slice("--transport=".length);
-		else if (arg.startsWith("-"))
-			throw new Error("Usage: tp-shot [--async] [--host HOST] [IMAGE]");
+		else if (arg.startsWith("-")) throw new Error(USAGE);
 		else positional.push(arg);
 	}
-	if (positional.length > 1)
-		throw new Error("Usage: tp-shot [--async] [--host HOST] [IMAGE]");
+	if (positional.length > 1) throw new Error(USAGE);
 	parsed.input = positional[0];
 	return parsed;
 }
@@ -137,6 +149,10 @@ async function main(): Promise<number> {
 	}
 	if (parsed.help) {
 		console.log(usage());
+		return 0;
+	}
+	if (parsed.version) {
+		console.log("tp-shot 0.2.0");
 		return 0;
 	}
 	const env = mergedEnv();
@@ -340,5 +356,7 @@ function createLogPath(
 	return path;
 }
 
-const exitCode = await main();
-process.exitCode = exitCode;
+if (import.meta.main) {
+	const exitCode = await main();
+	process.exitCode = exitCode;
+}

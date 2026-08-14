@@ -3,6 +3,7 @@ import {
 	COMMANDS,
 	CliUsageError,
 	parseCommandArgs,
+	renderHelp,
 	resolveCommand,
 } from "../../src/lib/cli";
 
@@ -45,6 +46,32 @@ describe("CLI resolution", () => {
 });
 
 describe("CLI argument boundaries", () => {
+	test("help skips required positional validation", () => {
+		for (const name of ["name", "completions"]) {
+			const command = COMMANDS.find((item) => item.name === name);
+			if (!command) throw new Error(`${name} command missing`);
+			expect(parseCommandArgs(command, ["-h"])).toMatchObject({ help: true });
+		}
+	});
+
+	test("help uses concise syntax for nested and variadic arguments", () => {
+		expect(renderHelp(COMMANDS.find((item) => item.name === "shot"))).toContain(
+			"Usage: tp shot [latest|list [count]|dir]",
+		);
+		expect(
+			renderHelp(COMMANDS.find((item) => item.name === "global")),
+		).toContain("Usage: tp global [prefix [index]|index]");
+		expect(renderHelp(COMMANDS.find((item) => item.name === "new"))).toContain(
+			"Usage: tp new [command ...]",
+		);
+		expect(renderHelp(COMMANDS.find((item) => item.name === "pi"))).toContain(
+			"Usage: tp pi [pi-args ...]",
+		);
+		expect(renderHelp(COMMANDS.find((item) => item.name === "cmux"))).toContain(
+			"Usage: tp cmux [index|prefix|all]",
+		);
+	});
+
 	test("-- ends option parsing and keeps Pi argument boundaries", () => {
 		const pi = COMMANDS.find((command) => command.name === "pi");
 		if (!pi) throw new Error("pi command missing");

@@ -45,6 +45,8 @@ export interface CommandSpec {
 	positionals: readonly PositionalSpec[];
 	flags: readonly FlagSpec[];
 	help: string;
+	/** Optional concise syntax for nested or variadic arguments. */
+	usage?: string;
 	hidden?: boolean;
 	handler?: CommandHandler;
 }
@@ -65,6 +67,7 @@ export const COMMANDS: CommandSpec[] = [
 		name: "new",
 		aliases: ["n"],
 		positionals: [{ name: "command", rest: true }],
+		usage: "[command ...]",
 		flags: [
 			{
 				long: "name",
@@ -81,6 +84,7 @@ export const COMMANDS: CommandSpec[] = [
 		name: "pi",
 		aliases: ["p"],
 		positionals: [{ name: "pi-args", rest: true }],
+		usage: "[pi-args ...]",
 		flags: [
 			{
 				long: "name",
@@ -138,6 +142,7 @@ export const COMMANDS: CommandSpec[] = [
 		name: "shot",
 		aliases: [],
 		positionals: [{ name: "action", rest: true }],
+		usage: "[latest|list [count]|dir]",
 		flags: [helpFlag],
 		help: "Find uploaded screenshots",
 	},
@@ -145,6 +150,7 @@ export const COMMANDS: CommandSpec[] = [
 		name: "global",
 		aliases: ["g"],
 		positionals: [{ name: "selector", rest: true }],
+		usage: "[prefix [index]|index]",
 		flags: [
 			restartFlag,
 			{ long: "watch", short: "w", description: "Watch the global listing" },
@@ -165,6 +171,7 @@ export const COMMANDS: CommandSpec[] = [
 		name: "cmux",
 		aliases: ["c"],
 		positionals: [{ name: "selector" }],
+		usage: "[index|prefix|all]",
 		flags: [helpFlag],
 		help: "Open or focus sessions in cmux",
 	},
@@ -448,6 +455,7 @@ export function parseCommandArgs(
 		passthrough.push(...positionals);
 		positionals.length = 0;
 	}
+	if (help) return { options, positionals, passthrough, help, delimited };
 	const positionalSpec = command.positionals;
 	const restSpec = positionalSpec.find((item) => item.rest);
 	const max = restSpec ? Number.POSITIVE_INFINITY : positionalSpec.length;
@@ -470,6 +478,7 @@ export function parseCommandArgs(
 }
 
 function usageLine(command: CommandSpec): string {
+	if (command.usage) return `Usage: tp ${command.name} ${command.usage}`;
 	const positional = command.positionals
 		.map((item) => (item.required ? `<${item.name}>` : `[${item.name}]`))
 		.join(" ");

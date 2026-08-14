@@ -267,6 +267,7 @@ test("doctor reports check 5 failure when sessions lack live Pi metadata", async
 		const { result, checks } = await runDoctorJson(kit, { server });
 		expect(result.exitCode).toBe(1);
 		expect(checkOf(checks, 5).status).toBe("fail");
+		expect(checkOf(checks, 5).detail).toContain("no live Pi metadata found");
 	} finally {
 		server.teardown();
 		kit.cleanup();
