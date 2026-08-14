@@ -23,6 +23,10 @@ export interface ShotTransport {
 
 export type ShotTransportKind = "ssh" | "taildrive";
 
+export type TaildriveUploadStep =
+	| { type: "write"; path: string }
+	| { type: "rename"; from: string; to: string };
+
 export interface ShotOptions {
 	host: string;
 	remoteDir?: string;
@@ -195,6 +199,7 @@ export class TaildriveTransport implements ShotTransport {
 	constructor(
 		taildriveDir: string,
 		private readonly env: Record<string, string | undefined> = process.env,
+		private readonly onUploadStep?: (step: TaildriveUploadStep) => void,
 	) {
 		this.taildriveDir = expandLocalDir(taildriveDir, env);
 	}
@@ -233,7 +238,13 @@ export class TaildriveTransport implements ShotTransport {
 		try {
 			writeFileSync(temporary, readFileSync(sourcePath), { mode: 0o600 });
 			chmodSync(temporary, 0o600);
+			this.onUploadStep?.({ type: "write", path: temporary });
 			// Rename within the mounted share so Pi never observes a partial file.
+			this.onUploadStep?.({
+				type: "rename",
+				from: temporary,
+				to: destination,
+			});
 			renameSync(temporary, destination);
 		} catch (error) {
 			rmSync(temporary, { force: true });
@@ -258,6 +269,11 @@ export class TaildriveTransport implements ShotTransport {
 		const destination = this.localPath(finalPath);
 		try {
 			chmodSync(temporary, 0o600);
+			this.onUploadStep?.({
+				type: "rename",
+				from: temporary,
+				to: destination,
+			});
 			renameSync(temporary, destination);
 		} catch (error) {
 			throw new Error(

@@ -1,18 +1,19 @@
 import { expect, test } from "bun:test";
 import {
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
 	statSync,
-	watch,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
 	type ShotTransport,
 	TaildriveTransport,
+	type TaildriveUploadStep,
 	runAsyncWorker,
 	stageSourceForAsync,
 	syncUpload,
@@ -166,10 +167,21 @@ test("taildrive sync and async uploads publish private files in the share", asyn
 	expect(statSync(syncPath).mode & 0o777).toBe(0o600);
 
 	const asyncPath = "/pi/.cache/pi/screenshots/async.png";
-	const asyncEvents: string[] = [];
-	const asyncWatcher = watch(share, { persistent: false }, (event, name) => {
-		if (event === "rename" && name) asyncEvents.push(name.toString());
-	});
+	const asyncFinalPath = join(share, "async.png");
+	const asyncSteps: TaildriveUploadStep[] = [];
+	const asyncFinalPresence: boolean[] = [];
+	const asyncContents: string[] = [];
+	const transportWithObserver = new TaildriveTransport(
+		share,
+		{ HOME: files.root },
+		(step) => {
+			asyncSteps.push(step);
+			asyncFinalPresence.push(existsSync(asyncFinalPath));
+			asyncContents.push(
+				readFileSync(step.type === "write" ? step.path : step.from, "utf8"),
+			);
+		},
+	);
 	const status = runAsyncWorker(
 		{
 			host: "test",
@@ -181,40 +193,65 @@ test("taildrive sync and async uploads publish private files in the share", asyn
 			removeSource: false,
 			notifier: "none",
 		},
-		{ host: "test", notifier: "none", transport },
+		{ host: "test", notifier: "none", transport: transportWithObserver },
 	);
-	await Bun.sleep(25);
-	await new Promise((resolve) => setTimeout(resolve, 100));
-	asyncWatcher.close();
 
 	expect(status).toBe(0);
-	if (process.platform !== "darwin")
-		expect(
-			asyncEvents.some((name) => name.startsWith("..async.png.uploading.")),
-		).toBe(true);
-	expect(readFileSync(join(share, "async.png"), "utf8")).toBe("before");
-	expect(statSync(join(share, "async.png")).mode & 0o777).toBe(0o600);
+	expect(asyncSteps).toHaveLength(3);
+	expect(asyncSteps[0]).toMatchObject({ type: "write" });
+	expect(
+		basename(asyncSteps[0].type === "write" ? asyncSteps[0].path : ""),
+	).toMatch(/^\.\.async\.png\.uploading\..+\.uploading$/);
+	expect(asyncSteps[1]).toMatchObject({
+		type: "rename",
+		to: join(share, ".async.png.uploading"),
+	});
+	expect(asyncSteps[2]).toEqual({
+		type: "rename",
+		from: join(share, ".async.png.uploading"),
+		to: asyncFinalPath,
+	});
+	expect(asyncFinalPresence).toEqual([false, false, false]);
+	expect(asyncContents).toEqual(["before", "before", "before"]);
+	expect(readFileSync(asyncFinalPath, "utf8")).toBe("before");
+	expect(statSync(asyncFinalPath).mode & 0o777).toBe(0o600);
 	expect(readdirSync(share).filter((name) => name.startsWith(".")).length).toBe(
 		0,
 	);
 });
 
-test("taildrive upload exposes only the atomic rename result", async () => {
+test("taildrive upload exposes only the atomic rename result", () => {
 	const files = jobFiles();
 	const share = join(files.root, "taildrive");
 	mkdirSync(share);
-	const transport = new TaildriveTransport(share);
-	const events: string[] = [];
-	const watcher = watch(share, { persistent: false }, (event, name) => {
-		if (event === "rename" && name) events.push(name.toString());
+	const finalPath = join(share, "observed.png");
+	const steps: TaildriveUploadStep[] = [];
+	const finalPresence: boolean[] = [];
+	const contents: string[] = [];
+	const transport = new TaildriveTransport(share, process.env, (step) => {
+		steps.push(step);
+		finalPresence.push(existsSync(finalPath));
+		contents.push(
+			readFileSync(step.type === "write" ? step.path : step.from, "utf8"),
+		);
 	});
 
 	transport.upload(files.source, "/pi/screenshots/observed.png");
-	await Bun.sleep(25);
-	watcher.close();
 
-	expect(events.some((name) => name.startsWith(".observed.png."))).toBe(true);
-	expect(statSync(join(share, "observed.png")).mode & 0o777).toBe(0o600);
+	expect(steps).toHaveLength(2);
+	expect(steps[0]).toMatchObject({ type: "write" });
+	expect(basename(steps[0].type === "write" ? steps[0].path : "")).toMatch(
+		/^\.observed\.png\..+\.uploading$/,
+	);
+	expect(steps[1]).toEqual({
+		type: "rename",
+		from: steps[0].type === "write" ? steps[0].path : "",
+		to: finalPath,
+	});
+	expect(finalPresence).toEqual([false, false]);
+	expect(contents).toEqual(["before", "before"]);
+	expect(readFileSync(finalPath, "utf8")).toBe("before");
+	expect(statSync(finalPath).mode & 0o777).toBe(0o600);
 	expect(readdirSync(share).filter((name) => name.startsWith(".")).length).toBe(
 		0,
 	);
