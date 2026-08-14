@@ -6,6 +6,7 @@ import {
 	DifferentialTmuxServer,
 	describeBytes,
 	intentionalDivergences,
+	normalizeOutput,
 	normalizeStderr,
 	projectName,
 	runFishTp,
@@ -32,7 +33,6 @@ const commonEnv: Record<string, string> = {
 	XDG_CONFIG_HOME: join(homeRoot, "config"),
 	XDG_STATE_HOME: join(homeRoot, "state"),
 	TP_SHOT_DIR: join(homeRoot, "screenshots"),
-	TERM: "xterm-256color",
 	COLUMNS: "1000",
 };
 mkdirSync(commonEnv.XDG_CONFIG_HOME, { recursive: true });
@@ -105,14 +105,14 @@ function compareField(
 	roots: readonly string[],
 	sockets: readonly string[],
 ): void {
+	const normalize = (value: string): string =>
+		field === "stderr"
+			? normalizeStderr(value, { roots, sockets })
+			: normalizeOutput(value);
 	const fishValue =
-		field === "stderr"
-			? normalizeStderr(fish[field], { roots, sockets })
-			: fish[field];
+		typeof fish[field] === "string" ? normalize(fish[field]) : fish[field];
 	const tsValue =
-		field === "stderr"
-			? normalizeStderr(ts[field], { roots, sockets })
-			: ts[field];
+		typeof ts[field] === "string" ? normalize(ts[field]) : ts[field];
 	const intentional = findIntentional(id).find((item) => item.field === field);
 	if (intentional) {
 		expect(

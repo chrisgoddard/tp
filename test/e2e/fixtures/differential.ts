@@ -15,6 +15,9 @@ const repoRoot = resolve(import.meta.dir, "../../..");
 const fishEntrypoint = join(repoRoot, "legacy/functions/tp.fish");
 const fakePiEntrypoint = join(import.meta.dir, "fake-pi.ts");
 const tmuxBinary = Bun.which("tmux") ?? "/usr/bin/tmux";
+const differentialTerm = "xterm";
+// biome-ignore lint/suspicious/noControlCharactersInRegex: terminal escape bytes are intentional here.
+const sgr0ResetPrefix = /\x1b\(B(?=\x1b\[m)/g;
 
 export interface DifferentialRunOptions {
 	cwd: string;
@@ -77,7 +80,10 @@ export class DifferentialTmuxServer {
 	private invoke(args: readonly string[], allowFailure = false): CommandResult {
 		const child = Bun.spawnSync({
 			cmd: [tmuxBinary, "-L", this.socket, "-f", "/dev/null", ...args],
-			env: inheritedEnvironment({ TMUX: undefined }),
+			env: inheritedEnvironment({
+				TERM: differentialTerm,
+				TMUX: undefined,
+			}),
 			stdout: "pipe",
 			stderr: "pipe",
 		});
@@ -223,6 +229,7 @@ function fishEnvironment(
 	if (!shimRoot) throw new Error("fish runner is missing its tmux shim root");
 	return inheritedEnvironment({
 		...env,
+		TERM: differentialTerm,
 		PATH: `${shimRoot}:${process.env.PATH ?? ""}`,
 		TMUX: undefined,
 		TMUX_PANE: undefined,
@@ -315,6 +322,7 @@ export function runTypeScriptTp(
 		cwd: options.cwd,
 		env: {
 			...options.env,
+			TERM: differentialTerm,
 			TP_TMUX_SOCKET: options.socket,
 			TMUX: undefined,
 			TMUX_PANE: undefined,
@@ -322,11 +330,18 @@ export function runTypeScriptTp(
 	});
 }
 
+export function normalizeOutput(value: string): string {
+	// Normalization rules are limited to run-specific paths, labelled pids, and
+	// the no-op ASCII designator that terminfo may place before a reset. Fish's
+	// sgr0 varies by terminfo database: `\x1b(B\x1b[m` and `\x1b[m` are equal.
+	return value.replace(sgr0ResetPrefix, "");
+}
+
 export function normalizeStderr(
 	value: string,
 	options: { roots: readonly string[]; sockets: readonly string[] },
 ): string {
-	let result = value;
+	let result = normalizeOutput(value);
 	for (const root of options.roots) {
 		// Scratch roots and the shared project path differ between the two runs.
 		result = result.replaceAll(root, "<scratch-path>");
