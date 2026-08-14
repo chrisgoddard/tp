@@ -24,21 +24,70 @@ The v0.2 install is from a clone. Install Bun first, then:
 ```sh
 git clone https://github.com/chrisgoddard/tp.git
 cd tp
-bun install && bun link
+bun install
+bun add -g "file:$PWD"
 ```
 
-This links both `tp` and `tp-shot` into your Bun bin directory. Ensure that
-Bun's bin directory (`$HOME/.bun/bin` or `$BUN_INSTALL/bin`) is on `PATH`.
-Publishing an npm package is planned; it is not available yet.
+Use the absolute `file:` URL above. Do not use `bun install -g .` (it fails
+with `error: Package "@" has a dependency loop ... (DependencyLoop)`) or bare
+`bun add --global .` (it can resolve a stale clone). `bun add -g "file:$PWD"`
+installs both `tp` and `tp-shot` while linking
+the package files back to this checkout. Bun itself prints a Fish PATH hint
+when its global bin directory is not already on `PATH`.
 
-Check the installation with:
+Bun's global bin directory must be on `PATH`. Ask Bun where it is with
+`bun pm bin -g`; the usual default is `$HOME/.bun/bin`. For a default Bun
+installation, add it to Fish and to Bash or Zsh like this:
+
+```fish
+mkdir -p ~/.bun/bin
+fish_add_path ~/.bun/bin
+```
 
 ```sh
-command -v tp tp-shot
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+Do not use `bun link` as the install command. `bun link` registers the package
+for project-local linking (`bun link @chrisgoddard/tp` inside another project);
+it does not configure `PATH`, and the earlier `bun install && bun link`
+instructions did not install the CLI reliably.
+
+Check the installation from any directory with:
+
+```sh
+command -v tp
+command -v tp-shot
 tp version
 tp-shot --version
 tp doctor
 ```
+
+Uninstall it with:
+
+```sh
+bun remove -g @chrisgoddard/tp
+```
+
+### Manual symlink fallback
+
+If `bun add -g "file:$PWD"` is unavailable or fails, install symlinks to the
+checkout manually:
+
+```sh
+export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+BUN_BIN="$(bun pm bin -g 2>/dev/null || printf '%s/bin' "$BUN_INSTALL")"
+mkdir -p "$BUN_BIN"
+chmod +x src/bin/tp.ts src/bin/tp-shot.ts
+ln -sf "$PWD/src/bin/tp.ts" "$BUN_BIN/tp"
+ln -sf "$PWD/src/bin/tp-shot.ts" "$BUN_BIN/tp-shot"
+```
+
+Both the native install and this fallback point at the checkout, so they keep
+working after `git pull`, including when an updated command imports a new file.
+`tp update` continues to operate on the clone. Publishing an npm package is
+planned; it is not available yet.
 
 ## Command reference
 
@@ -367,12 +416,27 @@ Remove the plugin before installing the standalone binary:
 
 ```fish
 fisher remove chrisgoddard/tp
+functions --erase tp tp-shot
+rm -f ~/.config/fish/functions/tp.fish ~/.config/fish/functions/tp-shot.fish
 ```
 
-Then install Bun and follow the clone installation above. Do not link the old
-`functions/` or `completions/` files into your Fish configuration. The new
-`tp` and `tp-shot` executables work from Fish, Bash, Zsh, or another supported
-shell.
+Fish functions take precedence over `PATH`, so a leftover function named `tp`
+(or `tp-shot`) shadows the standalone binary. Run `functions --erase` in the
+current Fish session. If the functions return in a new session, delete their
+files at `~/.config/fish/functions/tp.fish` and
+`~/.config/fish/functions/tp-shot.fish`. Then install Bun and follow the clone
+installation above. After installation, verify that Fish resolves the
+binaries, not functions:
+
+```fish
+type -a tp tp-shot
+command -v tp
+```
+
+If `type -a tp tp-shot` still shows a function, start a fresh Fish session and
+run those checks again. Do not link the old `functions/` or `completions/`
+files into your Fish configuration. The new `tp` and `tp-shot` executables
+work from Fish, Bash, Zsh, or another supported shell.
 
 ## tp-shot: direct-binary screenshot uploads
 

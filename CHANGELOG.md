@@ -25,3 +25,5 @@ installation.
 - **Documentation — #30:** rewrote the README for the standalone binary,
   documented configuration, protocols, completions, transports, migration,
   and the frozen legacy directory, and added README command/example checks.
+- **Installation:** documented Bun's absolute `file:` global install for clone
+  checkouts, with a symlink fallback and PATH guidance.
