@@ -47,7 +47,7 @@ function requireSuccess(result: CommandResult, label: string): CommandResult {
 }
 
 function makeFixture(): InstallFixture {
-	const root = mkdtempSync(join(tmpdir(), "tp-install-e2e-"));
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "tp-install-e2e-")));
 	const home = join(root, "home");
 	const clone = join(root, "clone");
 	const outside = join(root, "outside");
@@ -73,7 +73,7 @@ function makeFixture(): InstallFixture {
 		"git clone",
 	);
 	mkdirSync(outside);
-	return { root, clone, outside, bunBin, env };
+	return { root, clone: realpathSync(clone), outside, bunBin, env };
 }
 
 function installDependencies(fixture: InstallFixture): void {
