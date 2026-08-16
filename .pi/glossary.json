@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "terms": [
+    {
+      "term": "Unix socket",
+      "plain": "A private file-like connection that lets processes on the same machine exchange messages.",
+      "keepBecause": "The proposed Pi control adapter needs a precise name for its local communication channel.",
+      "aliases": [
+        "Unix domain socket"
+      ],
+      "source": "auto",
+      "addedAt": "2026-08-15T14:15:26.405Z",
+      "addedBy": "01a005a9-6b54-7195-ba4f-32a52faf48d0"
+    }
+  ]
+}
